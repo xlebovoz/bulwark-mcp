@@ -1,0 +1,33 @@
+# mcp-firewall — example configuration
+#
+# This file is OPTIONAL. Every value here can also be set via CLI flag
+# or env var. Precedence (high → low):
+#   1. CLI flag                   (--db-path /tmp/x.db)
+#   2. environment variable       (MCP_FIREWALL_DB=/tmp/x.db)
+#   3. config file (this file)    (storage.db_path: /tmp/x.db)
+#   4. built-in default
+
+# --- Storage --------------------------------------------------------------
+storage:
+  # Where the audit log lives. Default: <project>/data/log.db
+  # Override with MCP_FIREWALL_DB.
+  db_path: "data/log.db"
+  # Max in-memory queue before we start dropping events with a warning.
+  queue_max: 10000
+  # Flush batch size / interval.
+  batch_size: 100
+  batch_interval_ms: 50
+
+# --- Logging --------------------------------------------------------------
+logging:
+  # Where mcp-firewall's OWN diagnostics go (NOT the audit log).
+  # stderr | <path>
+  # We never log to stdout because that channel is reserved for JSON-RPC frames
+  # going back to the client.
+  destination: "stderr"
+  level: "INFO"  # DEBUG | INFO | WARNING | ERROR
+
+# --- Detector (milestone 2 — not yet active) ------------------------------
+# detector:
+#   enabled: false
+#   rules_file: "rules/builtin.yaml"
