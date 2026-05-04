@@ -35,7 +35,12 @@ from dataclasses import dataclass
 from typing import IO, Literal, Protocol, cast
 
 from .config import Settings
+from .detectors.base import InspectionResult
+from .detectors.llm import OllamaClassifier
+from .detectors.rules import RulesEngine
+from .inspector import Inspector
 from .models import EventRecord, parse_frame, split_batch
+from .policy import Policy, default_policy
 from .storage import EventBuffer, Storage
 
 Direction = Literal["client_to_server", "server_to_client"]
@@ -117,82 +122,98 @@ async def run_proxy(
             stop_event = asyncio.Event()
             _install_signal_handlers(stop_event)
 
-            client_to_server = asyncio.create_task(
-                _pump(
-                    src=client_reader,
-                    dst=server_writer,
-                    direction="client_to_server",
-                    buffer=buffer,
-                    session_id=session_id,
-                    stop_event=stop_event,
-                ),
-                name="pump-c2s",
-            )
-            server_to_client = asyncio.create_task(
-                _pump(
-                    src=server_reader,
-                    dst=client_writer,
-                    direction="server_to_client",
-                    buffer=buffer,
-                    session_id=session_id,
-                    stop_event=stop_event,
-                ),
-                name="pump-s2c",
-            )
-            stop_waiter = asyncio.create_task(stop_event.wait(), name="stop-waiter")
+            # ADR-0004 §1: build the inspector if detector is enabled.
+            inspector, classifier = await _build_inspector(settings, storage)
+            client_write_lock = asyncio.Lock()
 
-            done, _ = await asyncio.wait(
-                {client_to_server, server_to_client, stop_waiter},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            try:
+                client_to_server = asyncio.create_task(
+                    _pump(
+                        src=client_reader,
+                        dst=server_writer,
+                        reverse_dst=client_writer,
+                        direction="client_to_server",
+                        inspector=inspector,
+                        client_write_lock=client_write_lock,
+                        is_client_target=False,
+                        buffer=buffer,
+                        session_id=session_id,
+                        stop_event=stop_event,
+                    ),
+                    name="pump-c2s",
+                )
+                server_to_client = asyncio.create_task(
+                    _pump(
+                        src=server_reader,
+                        dst=client_writer,
+                        reverse_dst=server_writer,
+                        direction="server_to_client",
+                        inspector=inspector,
+                        client_write_lock=client_write_lock,
+                        is_client_target=True,
+                        buffer=buffer,
+                        session_id=session_id,
+                        stop_event=stop_event,
+                    ),
+                    name="pump-s2c",
+                )
+                stop_waiter = asyncio.create_task(stop_event.wait(), name="stop-waiter")
 
-            for task in done:
-                if task is stop_waiter:
-                    continue
-                exc = task.exception()
-                if exc is not None and not isinstance(exc, asyncio.CancelledError):
-                    logger.error("pump task %s failed: %r", task.get_name(), exc)
+                done, _ = await asyncio.wait(
+                    {client_to_server, server_to_client, stop_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
 
-            if stop_waiter in done:
-                # Forced shutdown — kill both directions immediately.
-                for task in (client_to_server, server_to_client):
-                    task.cancel()
-            elif client_to_server in done and server_to_client not in done:
-                # Client EOF. Half-close server stdin (await wait_closed so the
-                # peer actually sees EOF) and let the server drain any pending
-                # replies before we tear down s2c.
-                await server_writer.aclose()
-                try:
-                    await asyncio.wait_for(server_to_client, timeout=10.0)
-                except TimeoutError:
-                    logger.warning("server did not flush within 10s; cancelling")
-                    server_to_client.cancel()
-            elif server_to_client in done and client_to_server not in done:
-                # Server EOF / crash. Stop reading from client.
-                client_to_server.cancel()
+                for task in done:
+                    if task is stop_waiter:
+                        continue
+                    exc = task.exception()
+                    if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                        logger.error("pump task %s failed: %r", task.get_name(), exc)
 
-            # stop_waiter may still be pending — always cancel before awaiting
-            # so we never block the shutdown path on an idle event.
-            stop_waiter.cancel()
-            for task in (client_to_server, server_to_client, stop_waiter):
-                with suppress(asyncio.CancelledError, Exception):
-                    await task
-
-            with suppress(ProcessLookupError):
-                if child.returncode is None:
+                if stop_waiter in done:
+                    # Forced shutdown — kill both directions immediately.
+                    for task in (client_to_server, server_to_client):
+                        task.cancel()
+                elif client_to_server in done and server_to_client not in done:
+                    # Client EOF. Half-close server stdin (await wait_closed so the
+                    # peer actually sees EOF) and let the server drain any pending
+                    # replies before we tear down s2c.
                     await server_writer.aclose()
                     try:
-                        await asyncio.wait_for(child.wait(), timeout=2.0)
+                        await asyncio.wait_for(server_to_client, timeout=10.0)
                     except TimeoutError:
-                        child.terminate()
+                        logger.warning("server did not flush within 10s; cancelling")
+                        server_to_client.cancel()
+                elif server_to_client in done and client_to_server not in done:
+                    # Server EOF / crash. Stop reading from client.
+                    client_to_server.cancel()
+
+                # stop_waiter may still be pending — always cancel before awaiting
+                # so we never block the shutdown path on an idle event.
+                stop_waiter.cancel()
+                for task in (client_to_server, server_to_client, stop_waiter):
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
+
+                with suppress(ProcessLookupError):
+                    if child.returncode is None:
+                        await server_writer.aclose()
                         try:
                             await asyncio.wait_for(child.wait(), timeout=2.0)
                         except TimeoutError:
-                            child.kill()
-                            await child.wait()
+                            child.terminate()
+                            try:
+                                await asyncio.wait_for(child.wait(), timeout=2.0)
+                            except TimeoutError:
+                                child.kill()
+                                await child.wait()
 
-            exit_code = child.returncode if child.returncode is not None else -1
-            dropped = buffer.dropped
+                exit_code = child.returncode if child.returncode is not None else -1
+                dropped = buffer.dropped
+            finally:
+                if classifier is not None:
+                    await classifier.aclose()
 
         await storage.end_session(session_id, exit_code=exit_code)
         return ProxyResult(exit_code=exit_code, events_dropped=dropped)
@@ -204,12 +225,33 @@ async def _pump(
     *,
     src: _LineReader,
     dst: _LineWriter,
+    reverse_dst: _LineWriter,
     direction: Direction,
+    inspector: Inspector | None,
+    client_write_lock: asyncio.Lock,
+    is_client_target: bool,
     buffer: EventBuffer,
     session_id: int,
     stop_event: asyncio.Event,
 ) -> None:
-    """Copy newline-delimited frames from ``src`` to ``dst``, logging each one."""
+    """Copy newline-delimited frames from ``src`` to ``dst``, optionally
+    inspecting and substituting them along the way (ADR-0004 §1).
+
+    Parameters
+    ----------
+    dst
+        The "primary" peer for this direction — server stdin for c2s,
+        client stdout for s2c.
+    reverse_dst
+        The other peer. Only used when the inspector decides to BLOCK
+        a c2s request and we need to send a synthetic JSON-RPC error
+        back to the client (ADR-0004 §5).
+    is_client_target
+        ``True`` when ``dst`` is the client writer. We hold
+        ``client_write_lock`` for every write to a client-bound writer
+        so the c2s synthetic-block path cannot interleave with normal
+        s2c forwarding.
+    """
     try:
         while not stop_event.is_set():
             try:
@@ -223,7 +265,11 @@ async def _pump(
                     raw=consumed.decode("utf-8", errors="replace"),
                     note="line_limit_exceeded",
                 )
-                if not await dst.write_line(consumed):
+                if not await _safe_write(
+                    dst,
+                    consumed,
+                    lock=client_write_lock if is_client_target else None,
+                ):
                     return
                 continue
             except (ConnectionResetError, BrokenPipeError):
@@ -232,21 +278,87 @@ async def _pump(
             if not line:
                 return  # EOF
 
-            if not await dst.write_line(line):
-                return
-
             decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
             if not decoded.strip():
+                if not await _safe_write(
+                    dst,
+                    line,
+                    lock=client_write_lock if is_client_target else None,
+                ):
+                    return
                 continue
-            _log_frame(
+
+            inspection: InspectionResult | None = None
+            if inspector is not None:
+                parsed_msg, _ = parse_frame(decoded)
+                method_hint: str | None = getattr(parsed_msg, "method", None)
+                inspection = await inspector.inspect(
+                    raw=decoded,
+                    parsed=parsed_msg,
+                    direction=direction,
+                    method_hint=method_hint,
+                )
+
+            if (
+                inspection is not None
+                and inspection.action == "block"
+                and inspection.replacement is not None
+            ):
+                replacement_bytes = (inspection.replacement + "\n").encode("utf-8")
+                if direction == "server_to_client":
+                    # s2c block: substitute the bytes flowing to the client.
+                    if not await _safe_write(dst, replacement_bytes, lock=client_write_lock):
+                        return
+                else:
+                    # c2s block: send synthetic error reply back to client,
+                    # never forward the original request to the server.
+                    if not await _safe_write(
+                        reverse_dst, replacement_bytes, lock=client_write_lock
+                    ):
+                        return
+                    _record_synthetic(
+                        buffer,
+                        session_id=session_id,
+                        raw=inspection.replacement,
+                        inspection=inspection,
+                    )
+                _log_frame_with_verdict(
+                    buffer,
+                    session_id=session_id,
+                    direction=direction,
+                    raw=decoded,
+                    inspection=inspection,
+                )
+                continue
+
+            # Normal forward (allow / warn / block-downgraded-to-warn).
+            if not await _safe_write(
+                dst, line, lock=client_write_lock if is_client_target else None
+            ):
+                return
+            _log_frame_with_verdict(
                 buffer,
                 session_id=session_id,
                 direction=direction,
                 raw=decoded,
+                inspection=inspection,
             )
     finally:
         if not dst.is_closing():
             dst.close()
+
+
+async def _safe_write(
+    writer: _LineWriter,
+    data: bytes,
+    *,
+    lock: asyncio.Lock | None,
+) -> bool:
+    """Write ``data`` through ``writer``, optionally serialised by a lock."""
+    if lock is None:
+        return await writer.write_line(data)
+    async with lock:
+        return await writer.write_line(data)
 
 
 async def _drain_oversized(src: _LineReader, consumed: int) -> bytes:
@@ -265,13 +377,19 @@ async def _drain_oversized(src: _LineReader, consumed: int) -> bytes:
     return b""
 
 
-def _log_frame(
+def _log_frame_with_verdict(
     buffer: EventBuffer,
     *,
     session_id: int,
     direction: Direction,
     raw: str,
+    inspection: InspectionResult | None,
 ) -> None:
+    """Log every JSON-RPC member with optional detector verdict applied.
+
+    When ``inspection`` is ``None`` (detector disabled) this falls back to
+    the Week 1 shape — det_* columns stay NULL.
+    """
     for member in split_batch(raw):
         parsed, kind = parse_frame(member)
         record = EventRecord.from_parsed(
@@ -281,7 +399,54 @@ def _log_frame(
             kind=kind,
             raw=member,
         )
+        if inspection is not None:
+            record = record.model_copy(
+                update={
+                    "det_verdict": inspection.verdict,
+                    "det_score": inspection.score,
+                    "det_rules": (list(inspection.rules_hit) if inspection.rules_hit else None),
+                    "det_classifier": inspection.classifier,
+                    "det_latency_ms": inspection.latency_ms,
+                    "det_action": inspection.action,
+                    "note": inspection.note,
+                }
+            )
         buffer.record(record)
+
+
+def _record_synthetic(
+    buffer: EventBuffer,
+    *,
+    session_id: int,
+    raw: str,
+    inspection: InspectionResult,
+) -> None:
+    """Log a synthetic s2c reply emitted by the proxy on c2s block.
+
+    The synthetic event mirrors the parent c2s block's verdict so
+    ``logs --verdict block`` shows BOTH rows; ``note='synthetic-block'``
+    marks the row as proxy-emitted rather than from the real server.
+    """
+    parsed, kind = parse_frame(raw)
+    record = EventRecord.from_parsed(
+        session_id=session_id,
+        direction="server_to_client",
+        parsed=parsed,
+        kind=kind,
+        raw=raw,
+    )
+    record = record.model_copy(
+        update={
+            "det_verdict": inspection.verdict,
+            "det_score": inspection.score,
+            "det_rules": list(inspection.rules_hit) if inspection.rules_hit else None,
+            "det_classifier": inspection.classifier,
+            "det_latency_ms": inspection.latency_ms,
+            "det_action": inspection.action,
+            "note": "synthetic-block",
+        }
+    )
+    buffer.record(record)
 
 
 def _record_raw(
@@ -443,3 +608,49 @@ async def _patch_session_with_server_pid(
     if server_pid is None:
         return
     await storage.set_server_pid(session_id, server_pid)
+
+
+async def _build_inspector(
+    settings: Settings, storage: Storage
+) -> tuple[Inspector | None, OllamaClassifier | None]:
+    """Construct the Inspector + classifier pair (ADR-0004 §1).
+
+    Returns ``(None, None)`` when ``settings.detector.enabled`` is False —
+    the pump then keeps Week 1 behaviour. Otherwise the caller owns the
+    classifier and must ``aclose`` it on shutdown.
+    """
+    det = settings.detector
+    if not det.enabled:
+        return None, None
+
+    rules = RulesEngine.from_directory(det.rules_dir)
+    policy = (
+        Policy.from_file(det.policies_file) if det.policies_file is not None else default_policy()
+    )
+
+    classifier: OllamaClassifier | None = None
+    if det.llm_enabled:
+        classifier = OllamaClassifier(
+            storage=storage,
+            url=det.ollama_url,
+            model=det.ollama_model,
+            timeout_ms=det.timeout_ms,
+            cache_ttl_s=det.cache_ttl_s,
+            circuit_threshold=det.circuit_threshold,
+            circuit_open_s=det.circuit_open_s,
+        )
+
+    inspector = Inspector(
+        rules=rules,
+        classifier=classifier,
+        policy=policy,
+        max_latency_ms=det.max_latency_ms,
+        short_circuit_threshold=det.short_circuit_threshold,
+    )
+    logger.info(
+        "detector: enabled (rules=%d, llm=%s, policy=%s)",
+        len(rules),
+        "on" if classifier is not None else "off",
+        det.policies_file or "<built-in>",
+    )
+    return inspector, classifier
