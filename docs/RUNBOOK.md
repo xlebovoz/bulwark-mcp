@@ -2,6 +2,39 @@
 
 Operational notes for running `mcp-firewall` in front of a real MCP server.
 
+## End-to-end verification (smoke test)
+
+The fastest way to confirm a fresh checkout actually works against a real MCP server. Pinned version because the latest `@modelcontextprotocol/server-filesystem` (as of 2026-05-04) ships zod v4 which trips a Node 20 ESM resolution bug — milestone-2 issue tracker entry to revisit once the upstream lands a fix.
+
+```bash
+# 1. Prepare a target directory the server can see
+mkdir -p /private/tmp/mcp-fs-test
+echo "hello-from-mcp-firewall" > /private/tmp/mcp-fs-test/greeting.txt
+
+# 2. Drive the proxy with an MCP handshake + two real tool calls
+{
+  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0.1.0"}}}'
+  sleep 1
+  echo '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+  echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+  sleep 1
+  echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_directory","arguments":{"path":"/private/tmp/mcp-fs-test"}}}'
+  sleep 1
+  echo '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_text_file","arguments":{"path":"/private/tmp/mcp-fs-test/greeting.txt"}}}'
+  sleep 2
+} | mcp-firewall run \
+    --server "npx -y @modelcontextprotocol/server-filesystem@2025.11.25 /private/tmp/mcp-fs-test" \
+    > stdout.json 2> stderr.txt
+
+# 3. Expect: exit 0, 9 rows in the log, the greeting echoed back
+mcp-firewall logs --tail 20
+sqlite3 data/log.db 'SELECT COUNT(*) FROM events;'   # 9
+```
+
+If the response on `id=4` contains `hello-from-mcp-firewall`, the proxy is healthy.
+
+> ⚠️ macOS detail: the system maps `/tmp` to `/private/tmp`. The filesystem server canonicalises paths and rejects `/tmp/...` as outside its allowed roots. Always pass the realpath when feeding paths to the server.
+
 ## Day-to-day
 
 ### Start the proxy attached to Claude Desktop
