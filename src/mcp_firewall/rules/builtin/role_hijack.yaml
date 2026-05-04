@@ -1,0 +1,59 @@
+# Role-hijack / instruction-override patterns.
+#
+# These patterns target the most common public prompt-injection probes
+# documented by garak, promptfoo, and Simon Willison. They apply only
+# to server_to_client frames by default — finding "ignore previous
+# instructions" inside a *user* request is usually legitimate intent.
+#
+# All scores are conservative. Combine with the LLM classifier for
+# higher confidence; see ADR-0004 §2.
+
+rules:
+  - id: role_hijack.ignore_previous
+    description: "'Ignore (all) previous/prior/above instructions' family"
+    pattern: '(?i)ignore\s+(?:all\s+)?(?:previous|prior|above|earlier|the\s+previous)\s+(?:instructions?|prompts?|context|directives?|rules?|commands?)'
+    score: 0.85
+    apply_to: [server_to_client]
+    source: "https://simonwillison.net/2022/Sep/12/prompt-injection/"
+
+  - id: role_hijack.disregard_above
+    description: "'Disregard / forget / abandon everything above' override"
+    pattern: '(?i)(?:disregard|forget|abandon|never\s+mind)\s+(?:everything|all|the)\s+(?:above|previous|prior|before)'
+    score: 0.85
+    apply_to: [server_to_client]
+    source: "promptfoo: redteam.harmful.injection"
+
+  - id: role_hijack.you_are_now
+    description: "'You are now [persona]' role replacement"
+    pattern: '(?i)you\s+are\s+now\s+(?:a|an|the|going\s+to\s+be)\b'
+    score: 0.65
+    apply_to: [server_to_client]
+    source: "garak: probes.promptinject.HijackHateHumans"
+
+  - id: role_hijack.new_instructions
+    description: "'Your new instructions are' replacement"
+    pattern: '(?i)(?:your\s+new\s+(?:instructions?|directives?|rules?|task|mission)|new\s+system\s+prompt)\s*(?:are|is|:|=)'
+    score: 0.85
+    apply_to: [server_to_client]
+    source: "garak: probes.promptinject"
+
+  - id: role_hijack.act_as_jailbreak
+    description: "'Act as DAN/AIM/STAN' or 'unrestricted' jailbreak prefix"
+    pattern: '(?i)(?:act|pretend|behave|respond|roleplay)\s+(?:as|like)\s+(?:if\s+)?(?:you\s+)?(?:were|are)?\s*(?:dan|stan|aim|jailbroken|unrestricted|no[-\s]rules|developer\s+mode)'
+    score: 0.9
+    apply_to: [server_to_client]
+    source: "https://www.jailbreakchat.com/"
+
+  - id: role_hijack.fake_system_tag
+    description: "Fake system / im_start tag attempting to inject a system role"
+    pattern: '(?i)<\s*\|?\s*(?:system|im_start|admin|developer)\s*\|?\s*>'
+    score: 0.8
+    apply_to: [server_to_client]
+    source: "https://github.com/leondz/garak/tree/main/garak/probes"
+
+  - id: role_hijack.from_now_on
+    description: "'From now on, you will...' instruction override"
+    pattern: '(?i)from\s+(?:now\s+on|this\s+(?:point|moment))[\s,]+(?:you\s+(?:will|must|shall)|always|never)\b'
+    score: 0.7
+    apply_to: [server_to_client]
+    source: "https://simonwillison.net/tags/prompt-injection/"

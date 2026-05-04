@@ -1,0 +1,24 @@
+# HTML / Markdown rendering tricks used to smuggle instructions past
+# a human reader who only sees the rendered output. Apply to s2c only.
+
+rules:
+  - id: html.hidden_comment_imperative
+    description: "Imperative verbs inside an HTML comment — likely a hidden instruction"
+    pattern: '(?is)<!--[^>]{0,400}\b(?:ignore|disregard|act\s+as|send|forward|leak|exfiltrate|reveal|print|transmit|upload|post)\b[^>]{0,400}-->'
+    score: 0.8
+    apply_to: [server_to_client]
+    source: "https://embracethered.com/blog/posts/2024/whoami-conditional-prompt-injection-instructions/"
+
+  - id: html.invisible_inline_text
+    description: "CSS-hidden inline element carrying a text payload"
+    pattern: '(?is)<(?:span|div|p|font)[^>]*style\s*=\s*["''][^"''>]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|color\s*:\s*(?:#?fff(?:fff)?|white|transparent))[^"''>]*["''][^>]*>[^<]{8,}</(?:span|div|p|font)>'
+    score: 0.7
+    apply_to: [server_to_client]
+    source: "https://embracethered.com/"
+
+  - id: html.data_uri_script
+    description: "data: URI carrying inline script payload"
+    pattern: '(?i)data:(?:text/html|application/javascript|text/javascript)[^,]*,[^"''>\s]*(?:<script|javascript:|onerror=|onload=)'
+    score: 0.75
+    apply_to: [server_to_client]
+    source: "OWASP A03 Injection"

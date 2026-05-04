@@ -1,0 +1,43 @@
+# Data-exfiltration patterns.
+#
+# These look for instructions that try to make the agent send/forward
+# secrets, credentials, or session contents to an attacker-controlled
+# destination — usually via a markdown image, an HTTP request, or a
+# shell command. All apply to server_to_client only; a user request
+# saying "POST this JSON to https://api.example.com" is legitimate.
+
+rules:
+  - id: exfil.send_to_url
+    description: "'Send/POST/exfiltrate ... to https://...' instruction"
+    pattern: '(?i)(?:send|post|upload|exfiltrate|leak|forward|transmit|submit|deliver)\s+(?:[a-z\s,\.]{1,60}?)\s+to\s+https?://'
+    score: 0.85
+    apply_to: [server_to_client]
+    source: "https://promptarmor.com/blog/prompt-injection-data-exfiltration"
+
+  - id: exfil.curl_to_remote
+    description: "Inline curl/wget exfiltration command embedded in data"
+    pattern: '(?i)(?:curl|wget|fetch)\s+[^|]*?(?:-X\s*POST|-X\s*PUT|--data|-d\s+["''])\s*[^|\n]*https?://'
+    score: 0.85
+    apply_to: [server_to_client]
+    source: "garak: probes.exploitation"
+
+  - id: exfil.markdown_image_with_query
+    description: "Markdown image whose URL carries data in query string (referrer-leak attack)"
+    pattern: '!\[[^\]]{0,80}\]\(https?://[^\s)]+\?[^)]*(?:data|content|message|prompt|secret|key|token|history|conv|chat)='
+    score: 0.9
+    apply_to: [server_to_client]
+    source: "https://embracethered.com/blog/posts/2023/data-exfiltration-via-markdown-images-claude/"
+
+  - id: exfil.credential_keywords
+    description: "Instructions to read environment variables, SSH keys, or API credentials"
+    pattern: '(?i)(?:read|cat|print|reveal|show|return|output)\s+(?:the\s+)?(?:contents?\s+of\s+)?(?:\$HOME|~/\.[a-z_]+|env\b|environment\s+variables?|API[_\s-]?keys?|secrets?\b|credentials?\b|\.aws/credentials|id_rsa|\.ssh/|\.netrc|\.pgpass)'
+    score: 0.85
+    apply_to: [server_to_client]
+    source: "https://embracethered.com/"
+
+  - id: exfil.dns_beacon
+    description: "Out-of-band DNS exfil markers (Burp Collaborator-style)"
+    pattern: '(?i)(?:dig|nslookup|host|drill)\s+[a-z0-9.-]*\.(?:burpcollaborator\.net|interact\.sh|oastify\.com|requestbin\.com)'
+    score: 0.9
+    apply_to: [server_to_client]
+    source: "OWASP A03 / OOB exfil techniques"

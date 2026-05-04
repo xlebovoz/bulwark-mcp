@@ -1,0 +1,34 @@
+# Invisible / homoglyph / bidi-override Unicode patterns.
+#
+# These apply to BOTH directions. An agent's response or a user's
+# request that contains zero-width or tag characters is almost always
+# malicious or accidental copy-paste from an untrusted source.
+
+rules:
+  - id: unicode.zero_width_run
+    description: "Run of zero-width characters used to hide instructions from human readers"
+    pattern: '[​‌‍⁠﻿]{3,}'
+    score: 0.7
+    apply_to: [server_to_client, client_to_server]
+    source: "https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/"
+
+  - id: unicode.tag_chars
+    description: "Unicode TAG characters (U+E0000-U+E007F) — invisible prompt injection"
+    pattern: '[\U000e0000-\U000e007f]'
+    score: 0.95
+    apply_to: [server_to_client, client_to_server]
+    source: "https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/"
+
+  - id: unicode.rtl_override
+    description: "RTL-override / LTR-override character (Trojan Source family)"
+    pattern: '[‪-‮]'
+    score: 0.7
+    apply_to: [server_to_client, client_to_server]
+    source: "https://trojansource.codes/ (CVE-2021-42574)"
+
+  - id: unicode.bidi_isolate
+    description: "Bidirectional isolate characters used in Trojan Source attacks"
+    pattern: '[⁦-⁩]{2,}'
+    score: 0.6
+    apply_to: [server_to_client, client_to_server]
+    source: "https://trojansource.codes/"

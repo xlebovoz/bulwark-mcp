@@ -1,0 +1,40 @@
+# Shell-injection markers. These apply to client_to_server only — they
+# look at tool-call arguments the agent sends to the MCP server. The
+# LLM classifier is *not* invoked on c2s frames (ADR-0004 §2), so these
+# patterns are the only line of defence on outbound argv.
+
+rules:
+  - id: shell.rm_rf_root_or_home
+    description: "rm -rf against root, home, or parent path"
+    pattern: '\brm\s+(?:-[rRf]+\s+)+(?:--no-preserve-root\s+)?(?:/(?:[\s*"'']|$)|~|\$HOME|\.\./)'
+    score: 0.95
+    apply_to: [client_to_server]
+    source: "OWASP A03 Injection"
+
+  - id: shell.curl_pipe_to_shell
+    description: "curl/wget piped directly into a shell — supply-chain attack staple"
+    pattern: '(?i)(?:curl|wget|fetch)\s+[^|]*?\|\s*(?:sh|bash|zsh|fish|ksh|python\d?|ruby|perl|node)\b'
+    score: 0.9
+    apply_to: [client_to_server]
+    source: "OWASP A06 / MITRE ATT&CK T1059.004"
+
+  - id: shell.base64_decoded_pipe
+    description: "Decoded base64 / echo of a long blob piped into a shell"
+    pattern: '(?i)(?:base64\s+(?:-d|--decode|-D)|echo\s+[''"]?[A-Za-z0-9+/=]{40,})\s*\|\s*(?:sh|bash|zsh|python\d?)'
+    score: 0.9
+    apply_to: [client_to_server]
+    source: "MITRE ATT&CK T1027.013"
+
+  - id: shell.reverse_shell_classic
+    description: "Classic reverse-shell incantations"
+    pattern: '(?i)(?:bash\s+-i\s+>&\s+/dev/tcp/|nc\s+(?:-[a-z]+\s+)*-e\s*/(?:bin|usr/bin)/(?:sh|bash)|python\d?\s+-c\s+[''"][^''"]*\b(?:socket|os|subprocess)\b)'
+    score: 0.95
+    apply_to: [client_to_server]
+    source: "https://gtfobins.github.io/"
+
+  - id: shell.history_clearing
+    description: "Attempt to clear shell history right after a sensitive op"
+    pattern: '(?i)(?:history\s+-c|>\s*~/\.(?:bash|zsh|fish)_history|unset\s+HISTFILE|export\s+HISTFILE\s*=\s*/dev/null)'
+    score: 0.7
+    apply_to: [client_to_server]
+    source: "MITRE ATT&CK T1070.003"
