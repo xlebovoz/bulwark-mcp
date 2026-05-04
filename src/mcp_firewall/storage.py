@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -55,7 +56,9 @@ CREATE TABLE IF NOT EXISTS events (
     session_id   INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     ts           TEXT    NOT NULL,
     direction    TEXT    NOT NULL CHECK (direction IN ('client_to_server','server_to_client')),
-    kind         TEXT    NOT NULL CHECK (kind IN ('request','response','notification','error','raw','parse_error')),
+    kind         TEXT    NOT NULL CHECK (
+        kind IN ('request','response','notification','error','raw','parse_error')
+    ),
     msg_id       TEXT,
     method       TEXT,
     params_json  TEXT,
@@ -152,6 +155,14 @@ class Storage:
         await conn.execute(
             "UPDATE sessions SET ended_at = ?, exit_code = ? WHERE id = ?",
             (datetime.now(UTC).isoformat(), exit_code, session_id),
+        )
+        await conn.commit()
+
+    async def set_server_pid(self, session_id: int, server_pid: int) -> None:
+        conn = self._required_conn
+        await conn.execute(
+            "UPDATE sessions SET server_pid = ? WHERE id = ?",
+            (server_pid, session_id),
         )
         await conn.commit()
 
@@ -278,15 +289,13 @@ class EventBuffer:
         await self._queue.put(None)
         try:
             await asyncio.wait_for(self._writer_task, timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("writer task did not drain in %.1fs; cancelling", timeout_s)
             self._writer_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError, Exception):
                 await self._writer_task
-            except (asyncio.CancelledError, Exception):
-                pass
         except asyncio.CancelledError:  # pragma: no cover
-            pass
+            logger.debug("shutdown was itself cancelled while awaiting writer")
         self._writer_task = None
 
     async def _run(self) -> None:
@@ -298,7 +307,7 @@ class EventBuffer:
                     item = await asyncio.wait_for(
                         self._queue.get(), timeout=self._batch_interval_s
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     item = None  # flush whatever we have
                 else:
                     if item is None:
