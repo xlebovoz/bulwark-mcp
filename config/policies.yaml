@@ -1,0 +1,56 @@
+# Sample policies.yaml for mcp-firewall (ADR-0004 §6).
+#
+# Pass via:
+#   mcp-firewall run --server "..." --detector --policies ./config/policies.yaml
+# or under the `detector.policies_file` key in your config YAML.
+#
+# Rules are evaluated TOP-TO-BOTTOM, FIRST MATCH WINS. The default action is
+# applied when no rule's `when:` clause matches. A rule with empty `when:` and
+# action `block` is rejected at load time — write `default: block` if you
+# really want to fail-closed.
+#
+# This file mirrors the built-in default policy (see policy.default_policy()).
+# Modify it to taste; the most common change is "warn → block" on the
+# classifier signal for paranoid mode.
+
+default: allow
+
+rules:
+  - name: block_high_score_s2c
+    when:
+      direction: server_to_client
+      detector_score_at_least: 0.85
+    action: block
+    message: "high-confidence prompt injection detected"
+
+  - name: warn_classifier_instruction
+    when:
+      direction: server_to_client
+      classifier: INSTRUCTION
+    action: warn
+    # Why warn rather than block? A 3 B parameter local model is too
+    # false-positive-prone to use as a blocker without a tuned threshold.
+    # If you want paranoid mode, change `action: warn` → `action: block`.
+    message: "classifier flagged instruction-like data"
+
+  - name: block_shell_injection_c2s
+    when:
+      direction: client_to_server
+      rules_hit_any:
+        - shell.rm_rf_root_or_home
+        - shell.curl_pipe_to_shell
+        - shell.base64_decoded_pipe
+        - shell.reverse_shell_classic
+    action: block
+    message: "shell-injection markers in tool arguments"
+
+  - name: warn_history_clearing_c2s
+    when:
+      direction: client_to_server
+      rules_hit_any:
+        - shell.history_clearing
+    action: warn
+    # History hygiene is normal admin behaviour — we don't block it, we
+    # just want a record. Flip to `block` if your environment never has a
+    # legitimate reason to clear shell history.
+    message: "history-clearing markers in tool arguments"
