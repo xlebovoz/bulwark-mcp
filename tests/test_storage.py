@@ -73,8 +73,7 @@ class TestStorage:
         conn = storage._required_conn
         with pytest.raises(Exception):  # noqa: B017
             await conn.execute(
-                "INSERT INTO events (session_id, ts, direction, kind, raw) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO events (session_id, ts, direction, kind, raw) VALUES (?, ?, ?, ?, ?)",
                 (sid, "2026-05-04T00:00:00Z", "sideways", "raw", "{}"),
             )
             await conn.commit()

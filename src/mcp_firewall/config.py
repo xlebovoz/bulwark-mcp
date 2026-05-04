@@ -78,9 +78,7 @@ def resolve_settings(
         storage_section = {}
 
     db_path_raw: str | os.PathLike[str] | None = (
-        cli_db_path
-        or os.environ.get(ENV_DB)
-        or storage_section.get("db_path")
+        cli_db_path or os.environ.get(ENV_DB) or storage_section.get("db_path")
     )
 
     if db_path_raw:

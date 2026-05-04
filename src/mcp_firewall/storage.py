@@ -304,9 +304,7 @@ class EventBuffer:
             while True:
                 stopping = False
                 try:
-                    item = await asyncio.wait_for(
-                        self._queue.get(), timeout=self._batch_interval_s
-                    )
+                    item = await asyncio.wait_for(self._queue.get(), timeout=self._batch_interval_s)
                 except TimeoutError:
                     item = None  # flush whatever we have
                 else:

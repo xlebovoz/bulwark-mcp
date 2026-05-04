@@ -63,9 +63,7 @@ async def test_round_trips_three_frames_and_persists_both_directions(tmp_path: P
         '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}',
         '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
     ]
-    rc, stdout, _ = await _run_proxy_subprocess(
-        db_path=db, server_cmd="cat", frames=frames
-    )
+    rc, stdout, _ = await _run_proxy_subprocess(db_path=db, server_cmd="cat", frames=frames)
     assert rc == 0
 
     forwarded = stdout.decode().splitlines()

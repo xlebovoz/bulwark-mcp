@@ -181,9 +181,9 @@ class EventRecord(BaseModel):
         )
 
 
-def _normalise_kind(kind: str) -> Literal[
-    "request", "response", "notification", "error", "raw", "parse_error"
-]:
+def _normalise_kind(
+    kind: str,
+) -> Literal["request", "response", "notification", "error", "raw", "parse_error"]:
     if kind in ("request", "response", "notification", "error", "parse_error"):
         return kind  # type: ignore[return-value]
     return "raw"
