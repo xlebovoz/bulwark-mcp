@@ -27,7 +27,23 @@ logging:
   destination: "stderr"
   level: "INFO"  # DEBUG | INFO | WARNING | ERROR
 
-# --- Detector (milestone 2 — not yet active) ------------------------------
-# detector:
-#   enabled: false
-#   rules_file: "rules/builtin.yaml"
+# --- Detector (Week 2) ----------------------------------------------------
+# Off by default — Week 1 users keep their latency profile until they opt
+# in. Once enabled, every JSON-RPC frame goes through the cascade in
+# ADR-0004 §2.
+detector:
+  enabled: false                    # set to true to turn the firewall on
+  # rules_dir: "/etc/mcp-firewall/rules"   # default: package's built-in pack
+  # policies_file: "/etc/mcp-firewall/policies.yaml"   # default: built-in policy
+  max_latency_ms: 200               # soft budget; hard abort at 1.25× this
+  short_circuit_threshold: 0.9      # rules score ≥ this skips the LLM
+
+  llm:
+    enabled: true                   # set to false for rules-only mode
+    backend: "ollama"
+    url: "http://localhost:11434"
+    model: "qwen2.5:3b"
+    timeout_ms: 1000                # per-request timeout
+    cache_ttl_s: 86400              # SHA-256 verdict cache TTL
+    circuit_threshold: 3            # consecutive failures to open the breaker
+    circuit_open_s: 60              # how long the breaker stays open
