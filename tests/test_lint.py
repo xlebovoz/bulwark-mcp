@@ -4,18 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from mcp_firewall.lint import lint_path
 
-
-_BUILTIN_DIR = (
-    Path(__file__).resolve().parent.parent
-    / "src"
-    / "mcp_firewall"
-    / "rules"
-    / "builtin"
-)
+_BUILTIN_DIR = Path(__file__).resolve().parent.parent / "src" / "mcp_firewall" / "rules" / "builtin"
 
 
 # ---------------------------------------------------------------------
@@ -140,9 +131,7 @@ class TestStrictMode:
         issues = lint_path(tmp_path / "p.yaml", strict=True)
         assert any("do not match the rule's pattern" in i.message for i in issues)
 
-    def test_strict_catches_false_positive_that_actually_matches(
-        self, tmp_path: Path
-    ) -> None:
+    def test_strict_catches_false_positive_that_actually_matches(self, tmp_path: Path) -> None:
         (tmp_path / "p.yaml").write_text(
             "rules:\n"
             "  - id: t.foo\n"

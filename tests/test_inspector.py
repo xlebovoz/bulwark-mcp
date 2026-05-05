@@ -222,9 +222,7 @@ class TestInspectorWithClassifier:
                 calls["n"] += 1
                 return httpx.Response(200, json={"response": "DATA"})
 
-            classifier = OllamaClassifier(
-                storage=storage, transport=httpx.MockTransport(handler)
-            )
+            classifier = OllamaClassifier(storage=storage, transport=httpx.MockTransport(handler))
             try:
                 insp = Inspector(
                     rules=builtin_engine,
@@ -248,9 +246,7 @@ class TestInspectorWithClassifier:
                     separators=(",", ":"),
                 )
                 parsed, _ = parse_frame(raw)
-                result = await insp.inspect(
-                    raw=raw, parsed=parsed, direction="server_to_client"
-                )
+                result = await insp.inspect(raw=raw, parsed=parsed, direction="server_to_client")
             finally:
                 await classifier.aclose()
         assert calls["n"] == 0

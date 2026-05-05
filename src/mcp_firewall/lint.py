@@ -32,7 +32,6 @@ import yaml
 
 from .detectors.rules import _compile_rule
 
-
 Severity = Literal["error", "warning"]
 
 _VALID_TIERS: frozenset[str] = frozenset(("experimental", "stable"))
@@ -149,9 +148,7 @@ def _lint_one(yaml_file: Path, *, strict: bool) -> list[LintIssue]:
     return issues
 
 
-def _strict_checks(
-    compiled: Any, raw: dict[str, Any], yaml_file: Path
-) -> list[LintIssue]:
+def _strict_checks(compiled: Any, raw: dict[str, Any], yaml_file: Path) -> list[LintIssue]:
     """Rules-pack hygiene checks for promotion to the built-in pack."""
     out: list[LintIssue] = []
 
@@ -160,7 +157,9 @@ def _strict_checks(
             LintIssue(
                 severity="warning",
                 rule_id=compiled.id,
-                message="description is shorter than 10 chars; explain what attack class this catches",
+                message=(
+                    "description is shorter than 10 chars; explain what attack class this catches"
+                ),
                 file=yaml_file,
             )
         )
@@ -190,7 +189,9 @@ def _strict_checks(
             LintIssue(
                 severity="warning",
                 rule_id=compiled.id,
-                message="severity_tier is unset; pick 'experimental' (community) or 'stable' (built-in)",
+                message=(
+                    "severity_tier is unset; pick 'experimental' (community) or 'stable' (built-in)"
+                ),
                 file=yaml_file,
             )
         )
@@ -210,7 +211,10 @@ def _strict_checks(
             LintIssue(
                 severity="warning",
                 rule_id=compiled.id,
-                message="attack_examples is missing or empty; add at least one PoC string the rule should catch",
+                message=(
+                    "attack_examples is missing or empty; add at least one "
+                    "PoC string the rule should catch"
+                ),
                 file=yaml_file,
             )
         )

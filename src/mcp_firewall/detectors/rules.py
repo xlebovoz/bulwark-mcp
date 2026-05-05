@@ -37,12 +37,12 @@ from .base import Direction, RulesResult
 # whole TAG block (U+E0000-U+E007F) which is invisible to humans.
 _INVISIBLE_CHARS_RE = re.compile(
     r"["
-    r"­"            # soft hyphen
-    r"​-‏"     # zero-width spaces, LRM, RLM
-    r"‪-‮"     # bidi overrides
-    r"⁠-⁤"     # word joiner, invisible operators
-    r"⁦-⁩"     # bidi isolates
-    r"﻿"            # BOM
+    r"­"  # soft hyphen
+    r"​-‏"  # zero-width spaces, LRM, RLM
+    r"‪-‮"  # bidi overrides
+    r"⁠-⁤"  # word joiner, invisible operators
+    r"⁦-⁩"  # bidi isolates
+    r"﻿"  # BOM
     r"\U000e0000-\U000e007f"  # TAG characters
     r"]"
 )

@@ -127,6 +127,7 @@ class OllamaClassifier:
         if not text or not text.strip():
             return ClassifierResult(reason="skipped:empty")
 
+        truncated = len(text) > self._max_input_chars
         sample = _sanitise_for_prompt(self._truncate(text))
         content_hash = hashlib.sha256(sample.encode("utf-8")).hexdigest()
 
@@ -187,7 +188,8 @@ class OllamaClassifier:
             score=score,
             backend="ollama",
         )
-        return ClassifierResult(label=label, score=score, reason="ok")
+        reason = f"ok:truncated={self._max_input_chars}" if truncated else "ok"
+        return ClassifierResult(label=label, score=score, reason=reason)
 
     # ------------------------------------------------------------------
 

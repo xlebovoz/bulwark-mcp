@@ -256,8 +256,16 @@ def _verdict_for(action: DetectionAction) -> DetectionVerdict:
 
 
 def _trace_id(raw: str) -> str:
-    """8-hex-digit correlation id; unguessable so attackers cannot pre-compute."""
-    seed = f"{raw}|{time.perf_counter_ns()}".encode() + os.urandom(8)
+    """8-hex-digit correlation id; unguessable.
+
+    ``raw`` is intentionally not part of the seed — ``os.urandom(8)``
+    already gives unguessability and hashing the entire (potentially
+    multi-megabyte) frame on every block was a hot-path waste. The
+    parameter is kept for forward-compat in case we want to bind the
+    trace to the frame's content hash later.
+    """
+    del raw  # intentionally unused; see docstring
+    seed = f"{time.perf_counter_ns()}".encode() + os.urandom(8)
     return hashlib.sha1(seed).hexdigest()[:8]  # noqa: S324 — non-crypto trace id
 
 
