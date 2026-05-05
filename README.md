@@ -1,12 +1,10 @@
 # mcp-firewall
 
+[![CI](https://github.com/churik5/mcp-firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/churik5/mcp-firewall/actions/workflows/ci.yml) [![Python: 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
 > A prompt-injection firewall and audit log for [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers.
 
 ![mcp-firewall capturing JSON-RPC traffic between an MCP client and server](docs/screenshot.png)
-
-[![CI](https://github.com/churik/mcp-firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/churik/mcp-firewall/actions/workflows/ci.yml)
-[![Python: 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 > **Status: Week-2 alpha.** The proxy, the audit log, and the prompt-injection detector all work end-to-end. The detector is **off by default** — Week-1 users keep their latency profile until they opt in via `detector.enabled: true`. See the [roadmap](#roadmap).
 
