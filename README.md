@@ -6,7 +6,7 @@
 
 ![mcp-firewall blocking a real prompt injection attack in real time](docs/demo.gif)
 
-> **Status: Week-2 alpha.** The proxy, the audit log, and the prompt-injection detector all work end-to-end. The detector is **off by default** — Week-1 users keep their latency profile until they opt in via `detector.enabled: true`. See the [roadmap](#roadmap).
+> **Status: Week-3 alpha.** Detection layer + community-readiness + observability. The detector is **off by default**; telemetry is **off by default and opt-in only**. See the [roadmap](#roadmap).
 
 ## What it does
 
@@ -58,6 +58,15 @@
 - 🛟 **Graceful degradation** — Ollama is **optional**. If it is down or hits the timeout 3× in a row, the circuit breaker opens for 60 s and the proxy falls back to rules-only without dropping traffic.
 - 📜 **YAML policy engine** — `policies.yaml` decides allow/warn/block from `(direction, method, classifier, score, rules_hit)`. The default policy is conservative — see [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for paranoid mode.
 - ⚡ **Bounded latency** — rules <5 ms p95, classifier ≤200 ms p95 with cache, hard inspector abort at 250 ms (frame is forwarded with `det_verdict=WARN`). Numbers in [`docs/PERF.md`](docs/PERF.md).
+
+**Week 3 (community readiness + observability):**
+
+- 🛡️ **Audit-finding fixes (5 from Week-2 self-audit):** NFKC + invisible-char three-pass scan, per-member inspection of JSON-RPC batch frames, explicit `skipped:non_text_content` audit note, one-end truncation closes the seam evasion path.
+- 🧪 **`mcp-firewall rules lint [--strict]`** — validate community-contributed YAML packs. Strict mode is the gate for promotion to the built-in pack (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
+- 📊 **`mcp-firewall stats`** — local-only summary of the audit log: verdict counts, top-5 rules, latency p50/p95. Rich table by default, versioned JSON via `--json` for scripting.
+- 💓 **Health endpoint** — `mcp-firewall run --health-port N` binds a loopback `GET /health` listener (k8s/docker-friendly).
+- 📡 **Opt-in anonymous telemetry** — `MCP_FIREWALL_TELEMETRY=true` enables a daily payload of version + OS + event counts. **No rule names, no traffic content, no fingerprinting.** Full schema and what we explicitly DON'T send: [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
+- 🔌 **Tested MCP integrations** — `github`, `brave-search`, `postgres`. See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Add yours per the per-server template.
 
 ## Quick start
 
@@ -222,8 +231,9 @@ Architecture decisions land as ADRs in `docs/adr/`. Four ADRs ship with Week 2; 
 |-----------|--------|----------------------------------------------------------------------|
 | Week 1    | ✅     | stdio proxy + audit log + CLI viewer                                 |
 | Week 2    | ✅     | Rules + LLM detector, YAML policy engine, sanitised replacements     |
-| Week 3    | 🚧     | OSS launch + packaging on PyPI + Claude Desktop integration guide    |
-| Week 4-6  | ⏳     | Community rules repo, HTTP/SSE transport, viewer filters             |
+| Week 3    | ✅     | Community readiness, integration tests, observability, audit-fix v0.3|
+| Week 4    | 🚧     | OSS launch + packaging on PyPI + Claude Desktop integration guide    |
+| Week 5-6  | ⏳     | Community rules repo, HTTP/SSE transport, viewer filters             |
 | Week 7-9  | ⏳     | Pro tier: hosted logs, threat feed, Slack/Discord/Telegram alerts    |
 | Week 10-12| ⏳     | First paying users — pricing & monetisation                          |
 
