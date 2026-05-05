@@ -2,15 +2,17 @@
 
 [![CI](https://github.com/churik5/mcp-firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/churik5/mcp-firewall/actions/workflows/ci.yml) [![Python: 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-> A prompt-injection firewall and audit log for [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers.
+A local proxy that catches prompt-injection in tool results before your agent reads them. Self-hosted, no telemetry by default, ~200 ms p95 with the LLM classifier on.
 
 ![mcp-firewall blocking a real prompt injection attack in real time](docs/demo.gif)
 
-> **Status: Week-3 alpha.** Detection layer + community-readiness + observability. The detector is **off by default**; telemetry is **off by default and opt-in only**. See the [roadmap](#roadmap).
+## The problem
 
-## What it does
+Your MCP-enabled agent reads the output of every tool it calls. A file fetched from disk, an issue body pulled from GitHub, a row from a database, a search snippet from Brave — anything the server returns goes straight into the model's context as data. Except sometimes it's not data. Someone with write access to one of those surfaces (a public issue, a TEXT column, a web page that ranks for the agent's query) plants instructions that look like data, and the model treats them as commands. The agent then exfiltrates secrets, runs unintended tool calls, or rewrites itself into something more obedient.
 
-`mcp-firewall` sits between an MCP client (Claude Desktop, Cursor, Continue, …) and an MCP server (filesystem, github, postgres, …). It transparently forwards JSON-RPC traffic over stdio, persists **every** message — both directions — to a local SQLite database, and (when the detector is enabled) blocks prompt-injection payloads inside tool *results* before they ever reach the model.
+`mcp-firewall` runs on your machine, between the client and the server. It logs every JSON-RPC frame, scans tool results before they reach the agent, and replaces the suspicious ones with a sanitised reply that says "blocked" instead of carrying the payload through.
+
+Architecture lives in the four ADRs under [`docs/adr/`](docs/adr/). The short version: stdio proxy with two pumps, async SQLite writer, three-pass rules detector + optional local LLM classifier, YAML policy engine, all off-by-default until you opt in.
 
 ```
                   ┌──────────────┐    stdio JSON-RPC
@@ -70,27 +72,32 @@
 
 ## Quick start
 
+### From PyPI (recommended, once published)
+
 ```bash
-git clone https://github.com/churik/mcp-firewall.git
-cd mcp-firewall
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
-# Sanity check
+pipx install mcp-firewall
 mcp-firewall --version
-
-# End-to-end smoke test using `cat` as a fake echo server
-printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"ping"}' \
-  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-| mcp-firewall run --server "cat"
-
-# Inspect what was captured
-mcp-firewall logs --tail 20
 ```
 
-You should see the two outbound frames echoed back through stdout, and four rows in the audit log: two `client_to_server` and two `server_to_client`.
+`pipx` installs the CLI in its own venv on `$PATH` — that's what you want for a global tool that spawns child processes. Plain `pip install --user` works too if you don't have pipx around.
+
+### From source
+
+```bash
+git clone https://github.com/churik5/mcp-firewall.git
+cd mcp-firewall
+pip install -e ".[dev]"
+```
+
+### Smoke test
+
+```bash
+mcp-firewall doctor          # Python / Ollama / DB / rules — should be all green
+echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | mcp-firewall run --server "cat"
+mcp-firewall logs --tail 5
+```
+
+The first command prints a four-line table. The second pipes one frame through the proxy with `cat` as a stand-in MCP server; you should see the same frame echo back. The third shows the audit log row.
 
 ## Detection (Week 2)
 
@@ -225,6 +232,16 @@ Architecture decisions land as ADRs in `docs/adr/`. Four ADRs ship with Week 2; 
 - ADR-0006: async-parallel inspection + Anthropic Haiku tier.
 - ADR-0007: Pro tier — hosted log shipping & threat-feed sync.
 
+## FAQ
+
+A handful of questions that come up often. The full set lives in [`docs/FAQ.md`](docs/FAQ.md).
+
+**Does this work without Ollama?** Yes. With `--detector` and no Ollama running, the proxy falls back to rules-only mode: the regex packs still scan every frame, the policy engine still decides allow/warn/block, and the audit log still gets per-frame verdicts. You lose the LLM classifier's ability to catch obfuscated payloads, that's all. The circuit breaker handles Ollama's absence quietly — three failed calls and it stops trying for 60 seconds.
+
+**Is this production-ready?** Depends what you mean by production. The proxy is `0.x` and the detector defaults to off, so nothing about the current state will quietly impact a live deployment. What's stable: the audit log, the proxy itself, the rule-pack format. What's still moving: the policy DSL might gain new `when:` clauses in v0.5, and the LLM-classifier prompt may change shape if I move to a chat-format API. AGPL covers commercial use; talk to me before you build a hosted service on top.
+
+**How do I report a false positive?** Open a GitHub issue with the input that fired and the rule id. `mcp-firewall logs --tail 5` shows both. If the rule is in `src/mcp_firewall/rules/builtin/`, I'll fix the regex; if it's a community pack, the original author gets pinged on the issue. There's no rate limit on reports — please file even if you're not sure it's a false positive.
+
 ## Roadmap
 
 | Milestone | Status | Scope                                                                |
@@ -247,6 +264,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — setup, rule-pack a
 
 If you find a real-world prompt-injection PoC that `mcp-firewall` doesn't catch, please open an issue with a reproduction. That's the single most valuable contribution today.
 
-### Community files (in progress)
-
-`CODE_OF_CONDUCT.md`, `.github/ISSUE_TEMPLATE/*`, `.github/PULL_REQUEST_TEMPLATE.md`, and `.github/labels.yml` are planned for the next iteration. `CONTRIBUTING.md` and `SECURITY.md` are published.
