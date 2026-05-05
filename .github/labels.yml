@@ -1,0 +1,119 @@
+# GitHub labels for mcp-firewall
+# Apply with: github/issue-labeler action or manual via gh CLI
+# Format: https://github.com/crazy-max/ghaction-github-labeler
+
+# Type
+- name: bug
+  color: d73a4a
+  description: Something isn't working
+
+- name: enhancement
+  color: a2eeef
+  description: New feature or improvement
+
+- name: documentation
+  color: 0075ca
+  description: Documentation changes
+
+- name: question
+  color: d876e3
+  description: Further information is requested
+
+# Component
+- name: detector
+  color: f9d0c4
+  description: Detection layer (rules + LLM)
+
+- name: policy
+  color: fef2c0
+  description: Policy engine
+
+- name: proxy
+  color: c5def5
+  description: Proxy core (stdio, JSON-RPC)
+
+- name: rule-pack
+  color: bfd4f2
+  description: Detection rule pack (community or built-in)
+
+- name: storage
+  color: e4e669
+  description: Audit log, SQLite, schema
+
+- name: cli
+  color: c2e0c6
+  description: Command-line interface
+
+- name: telemetry
+  color: 5319e7
+  description: Anonymous opt-in telemetry
+
+- name: ci
+  color: ededed
+  description: GitHub Actions, build, lint, test infrastructure
+
+# Priority
+- name: priority/critical
+  color: b60205
+  description: Drop everything to fix
+
+- name: priority/high
+  color: d93f0b
+  description: Fix in next release
+
+- name: priority/medium
+  color: fbca04
+  description: Fix when convenient
+
+- name: priority/low
+  color: 0e8a16
+  description: Nice to have
+
+# Status
+- name: good first issue
+  color: 7057ff
+  description: Good for newcomers
+
+- name: help wanted
+  color: 008672
+  description: Extra attention is needed
+
+- name: needs-triage
+  color: cccccc
+  description: Awaiting maintainer review
+
+- name: needs-info
+  color: e99695
+  description: More information needed from reporter
+
+- name: blocked
+  color: 000000
+  description: Blocked on external dependency
+
+- name: wontfix
+  color: ffffff
+  description: This will not be worked on
+
+- name: duplicate
+  color: cfd3d7
+  description: This issue or PR already exists
+
+# Security
+- name: security
+  color: ee0701
+  description: Security-related (use Security Advisories for vulnerabilities)
+
+# Performance
+- name: performance
+  color: 1d76db
+  description: Performance improvements or regressions
+
+# Compatibility
+- name: compatibility
+  color: bfdadc
+  description: MCP server compatibility, version support
+
+# Community
+- name: discussion
+  color: d4c5f9
+  description: Open discussion, RFC, design proposal
