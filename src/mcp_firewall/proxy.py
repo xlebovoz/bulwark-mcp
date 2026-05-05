@@ -25,6 +25,7 @@ unchanged.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shlex
@@ -33,7 +34,7 @@ import sys
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import IO, Literal, Protocol, cast
+from typing import IO, Any, Literal, Protocol, cast
 
 from .config import Settings
 from .detectors.base import InspectionResult
@@ -42,7 +43,7 @@ from .detectors.rules import RulesEngine
 from .health import HealthState
 from .health import serve as serve_health
 from .inspector import Inspector
-from .models import EventRecord, parse_frame, split_batch
+from .models import EventRecord, MCPRequest, parse_frame, split_batch
 from .policy import Policy, default_policy
 from .storage import EventBuffer, Storage
 from .telemetry import TelemetryClient
@@ -361,11 +362,21 @@ async def _pump(
             )
 
             if blocking is not None:
+                # Week-4 audit fix: build a per-id reply array so the
+                # client sees a JSON-RPC response for *every* request id
+                # in the batch, not just the first blocked one. Blocked
+                # members get their actual sanitised replacement;
+                # non-blocked s2c members are forwarded verbatim;
+                # non-blocked c2s members get a synthesised
+                # "batch_aborted_by_sibling" error so no request is left
+                # hanging.
                 if is_batch:
-                    # Wrap the single replacement as a 1-element JSON-RPC
-                    # batch reply so a strict client parsing the array
-                    # still gets a valid response shape.
-                    replacement_text = "[" + (blocking.replacement or "") + "]"
+                    output_members = _build_batch_replacement(
+                        members=members,
+                        inspections=inspections,
+                        direction=direction,
+                    )
+                    replacement_text = "[" + ",".join(output_members) + "]"
                 else:
                     replacement_text = blocking.replacement or ""
                 replacement_bytes = (replacement_text + "\n").encode("utf-8")
@@ -408,6 +419,68 @@ async def _pump(
     finally:
         if not dst.is_closing():
             dst.close()
+
+
+def _build_batch_replacement(
+    *,
+    members: list[str],
+    inspections: list[InspectionResult | None],
+    direction: Direction,
+) -> list[str]:
+    """Build the per-member output array for a batch where any member blocks.
+
+    s2c: keep benign members as-is, replace blocked ones with their
+    sanitised reply.
+
+    c2s: never forward to the server (one bad sibling aborts the batch),
+    so synthesise per-id error replies for ALL members. Blocked ones
+    get their inspector-supplied replacement; non-blocked members get
+    a ``-32099 / batch_aborted_by_sibling`` reply with the same id so
+    the client's request ↔ response correlation is preserved.
+
+    Notifications (no JSON-RPC id) are dropped from c2s output —
+    they have no expected reply by spec, so there is nothing to
+    synthesise.
+    """
+    out: list[str] = []
+    for member, inspection in zip(members, inspections, strict=True):
+        if (
+            inspection is not None
+            and inspection.action == "block"
+            and inspection.replacement is not None
+        ):
+            out.append(inspection.replacement)
+            continue
+        if direction == "server_to_client":
+            # Forward the benign server response verbatim.
+            out.append(member)
+            continue
+        # c2s benign sibling: synthesize an error reply with the same id
+        # so the client doesn't hang on an unanswered request.
+        synth = _compose_batch_aborted_reply(member)
+        if synth is not None:
+            out.append(synth)
+    return out
+
+
+def _compose_batch_aborted_reply(member: str) -> str | None:
+    """Build a JSON-RPC error reply for a benign c2s batch member that
+    will not be forwarded because a sibling triggered a block.
+
+    Returns ``None`` for notifications (no id, no expected reply).
+    """
+    parsed, _ = parse_frame(member)
+    if not isinstance(parsed, MCPRequest):
+        return None
+    body: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": parsed.id,
+        "error": {
+            "code": -32099,
+            "message": "batch aborted: a sibling request was blocked by mcp-firewall",
+        },
+    }
+    return json.dumps(body, separators=(",", ":"))
 
 
 async def _safe_write(

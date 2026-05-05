@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001, RUF002 — Cyrillic/Greek homoglyphs are the file's purpose
 """YAML-driven rules detector (ADR-0004 §2).
 
 A rule pack is a YAML file with this shape::
@@ -46,6 +47,75 @@ _INVISIBLE_CHARS_RE = re.compile(
     r"\U000e0000-\U000e007f"  # TAG characters
     r"]"
 )
+
+# Cross-script homoglyph fold (Week-4 audit fix).
+#
+# A compact mapping of the highest-impact look-alikes from Cyrillic and
+# Greek that NFKC keeps separate by design. Shipping the full Unicode
+# `confusables.txt` would be ~10 MB of data — for v0.4 we hand-pick the
+# ~40 letters that actually appear in published prompt-injection PoCs.
+# Add a confusable in a community PR if your locale needs it.
+_HOMOGLYPHS: dict[str, str] = {
+    # Cyrillic lowercase → Latin
+    "а": "a",
+    "е": "e",
+    "о": "o",
+    "р": "p",
+    "с": "c",
+    "у": "y",
+    "х": "x",
+    "і": "i",
+    "ї": "i",
+    "ј": "j",
+    "ѕ": "s",
+    # Cyrillic uppercase → Latin
+    "А": "A",
+    "В": "B",
+    "Е": "E",
+    "К": "K",
+    "М": "M",
+    "Н": "H",
+    "О": "O",
+    "Р": "P",
+    "С": "C",
+    "Т": "T",
+    "У": "Y",
+    "Х": "X",
+    "І": "I",
+    "Ј": "J",
+    # Greek lowercase → Latin
+    "α": "a",
+    "ε": "e",
+    "ι": "i",
+    "ο": "o",
+    "ρ": "p",
+    "τ": "t",
+    "υ": "u",
+    "ν": "v",
+    "χ": "x",
+    # Greek uppercase → Latin
+    "Α": "A",
+    "Β": "B",
+    "Ε": "E",
+    "Ζ": "Z",
+    "Η": "H",
+    "Ι": "I",
+    "Κ": "K",
+    "Μ": "M",
+    "Ν": "N",
+    "Ο": "O",
+    "Ρ": "P",
+    "Τ": "T",
+    "Υ": "Y",
+    "Χ": "X",
+}
+_HOMOGLYPH_TABLE = str.maketrans(_HOMOGLYPHS)
+
+
+def _fold_homoglyphs(text: str) -> str:
+    """Replace common cross-script look-alikes with their Latin counterparts."""
+    return text.translate(_HOMOGLYPH_TABLE)
+
 
 logger = logging.getLogger(__name__)
 
@@ -150,24 +220,31 @@ class RulesEngine:
 
 
 def _normalise_within_word(text: str) -> str:
-    """NFKC + drop invisible / formatting chars (no replacement).
+    """NFKC + homoglyph fold + drop invisible / formatting chars.
 
     Used to catch attackers who place zero-width or TAG characters
-    *inside* a keyword: ``I\\u200bgnore`` → ``Ignore``.
+    *inside* a keyword (``I\\u200bgnore`` → ``Ignore``) AND attackers who
+    swap individual letters for cross-script look-alikes (Cyrillic
+    ``Ѕgnore`` → ``Sgnore`` after homoglyph fold; the rule still has
+    to match this exactly, hence the additional NFKC pass).
     """
-    return _INVISIBLE_CHARS_RE.sub("", unicodedata.normalize("NFKC", text))
+    folded = _fold_homoglyphs(unicodedata.normalize("NFKC", text))
+    return _INVISIBLE_CHARS_RE.sub("", folded)
 
 
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
 
 
 def _normalise_between_word(text: str) -> str:
-    """NFKC + replace invisible chars with a space + collapse whitespace runs.
+    """NFKC + homoglyph fold + replace invisibles with space + collapse runs.
 
     Used to catch attackers who use zero-width or TAG characters
-    *between* words: ``Ignore\\u200ball`` → ``Ignore all``.
+    *between* words: ``Ignore\\u200ball`` → ``Ignore all``. Homoglyph
+    folding happens here too so ``Іgnore все instructions`` (Cyrillic
+    ``І``, Cyrillic ``все``) collapses through this pass.
     """
-    spaced = _INVISIBLE_CHARS_RE.sub(" ", unicodedata.normalize("NFKC", text))
+    folded = _fold_homoglyphs(unicodedata.normalize("NFKC", text))
+    spaced = _INVISIBLE_CHARS_RE.sub(" ", folded)
     return _WHITESPACE_RUN_RE.sub(" ", spaced)
 
 

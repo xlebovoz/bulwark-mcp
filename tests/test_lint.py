@@ -147,6 +147,25 @@ class TestStrictMode:
         issues = lint_path(tmp_path / "p.yaml", strict=True)
         assert any("DO match the pattern" in i.message for i in issues)
 
+    def test_strict_warns_on_nested_quantifier_redos(self, tmp_path: Path) -> None:
+        # Week-4 audit fix: a nested quantifier is the canonical
+        # catastrophic-backtracking shape. Strict lint must flag it.
+        (tmp_path / "p.yaml").write_text(
+            "rules:\n"
+            "  - id: t.bad\n"
+            "    description: 'A long-enough description for the strict gate.'\n"
+            "    pattern: '(a+)+b'\n"
+            "    score: 0.5\n"
+            "    source: 'https://example.com/x'\n"
+            "    severity_tier: experimental\n"
+            "    attack_examples: ['aaaab']\n",
+            encoding="utf-8",
+        )
+        issues = lint_path(tmp_path / "p.yaml", strict=True)
+        assert any("nested quantifier" in i.message for i in issues), (
+            f"expected nested-quantifier warning; got {[i.message for i in issues]}"
+        )
+
     def test_strict_passes_a_well_formed_rule(self, tmp_path: Path) -> None:
         (tmp_path / "p.yaml").write_text(
             "rules:\n"

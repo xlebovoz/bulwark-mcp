@@ -23,6 +23,12 @@ from .storage import Storage
 
 STATS_SCHEMA_VERSION: Final[int] = 1
 
+# Per-row cap on det_rules JSON size. A corrupted (or hostile) row could
+# otherwise feed json.loads megabytes of nested arrays and stall the
+# stats query on CPU. Bounded at 64 KiB — orders of magnitude above any
+# realistic verdict shape (~5 rule ids ≈ 250 bytes).
+_DET_RULES_MAX_BYTES: Final[int] = 64 * 1024
+
 
 @dataclass(frozen=True)
 class RuleHit:
@@ -91,8 +97,12 @@ async def compute_stats(storage: Storage, *, since: timedelta) -> Stats:
         (start_iso, end_iso),
     )
     for r in await cur.fetchall():
+        rules_blob = r["det_rules"]
+        # Week-4 audit fix: bound JSON-parse cost on a per-row basis.
+        if rules_blob is None or len(rules_blob) > _DET_RULES_MAX_BYTES:
+            continue
         try:
-            ids = json.loads(r["det_rules"])
+            ids = json.loads(rules_blob)
         except (json.JSONDecodeError, TypeError):
             continue
         if isinstance(ids, list):

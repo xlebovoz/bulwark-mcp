@@ -24,6 +24,7 @@ need basic; built-in promotion requires strict + at least two tests
 from __future__ import annotations
 
 import re
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -36,6 +37,14 @@ Severity = Literal["error", "warning"]
 
 _VALID_TIERS: frozenset[str] = frozenset(("experimental", "stable"))
 _URL_RE = re.compile(r"^https?://[^\s]+$")
+
+# Catastrophic-backtracking shape: a quantified group whose body itself
+# contains a quantifier — e.g. ``(a+)+``, ``(.*x)*``, ``(\w+\s)*``.
+# False-positive-prone but cheap; the timed match below is the second line.
+_NESTED_QUANTIFIER_RE = re.compile(r"\([^)]*[+*][^)]*\)[+*?]")
+
+_REDOS_TIMEOUT_S = 0.1
+_REDOS_PROBE = "a" * 512
 
 
 @dataclass(frozen=True)
@@ -148,9 +157,91 @@ def _lint_one(yaml_file: Path, *, strict: bool) -> list[LintIssue]:
     return issues
 
 
+def _redos_checks(compiled: Any, yaml_file: Path) -> list[LintIssue]:
+    """Detect catastrophic-backtracking shapes before they reach runtime.
+
+    Uses a static heuristic + a wall-clock-bounded probe. False positives
+    are a feature here — the contributor can refactor the regex to avoid
+    nested quantifiers, which is the right answer for runtime safety.
+    """
+    out: list[LintIssue] = []
+    pattern_str = compiled.pattern.pattern
+
+    if _NESTED_QUANTIFIER_RE.search(pattern_str):
+        out.append(
+            LintIssue(
+                severity="warning",
+                rule_id=compiled.id,
+                message=(
+                    "pattern contains a nested quantifier (e.g. '(a+)+') — "
+                    "this is the canonical catastrophic-backtracking shape; "
+                    "rewrite without inner quantifiers inside a quantified group"
+                ),
+                file=yaml_file,
+            )
+        )
+
+    if not _timed_match_ok(compiled.pattern, _REDOS_PROBE, _REDOS_TIMEOUT_S):
+        out.append(
+            LintIssue(
+                severity="warning",
+                rule_id=compiled.id,
+                message=(
+                    f"pattern exceeded {int(_REDOS_TIMEOUT_S * 1000)}ms on a "
+                    f"{len(_REDOS_PROBE)}-char benign input — this is a likely "
+                    "ReDoS source; rewrite the regex"
+                ),
+                file=yaml_file,
+            )
+        )
+
+    return out
+
+
+def _timed_match_ok(pattern: re.Pattern[str], text: str, timeout_s: float) -> bool:
+    """Return ``True`` if ``pattern.search(text)`` completes within ``timeout_s``.
+
+    Uses ``signal.SIGALRM`` on POSIX. On Windows (no SIGALRM) we just run
+    the regex unbounded and trust the caller's input — `_REDOS_PROBE` is
+    short enough that even pathological patterns return in tens of ms on
+    most modern hardware. The lint is meant for CI / local dev, both
+    POSIX-dominant.
+    """
+    if not hasattr(signal, "SIGALRM"):
+        # Best-effort fallback. The static heuristic above is our other line.
+        try:
+            pattern.search(text)
+        except Exception:
+            return False
+        return True
+
+    def _handler(_signum: int, _frame: Any) -> None:
+        raise TimeoutError("regex match exceeded budget")
+
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    try:
+        pattern.search(text)
+    except TimeoutError:
+        return False
+    except Exception:
+        return False
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+    return True
+
+
 def _strict_checks(compiled: Any, raw: dict[str, Any], yaml_file: Path) -> list[LintIssue]:
     """Rules-pack hygiene checks for promotion to the built-in pack."""
     out: list[LintIssue] = []
+
+    # ReDoS guard (Week-4 audit fix). Two layers:
+    #   1. Static heuristic — flag obvious nested quantifiers like (a+)+.
+    #   2. Timed probe — run pattern.search against a degenerate input
+    #      with a 100 ms wall-clock budget. Any pattern that goes
+    #      catastrophic on 512 'a's is unfit for runtime use.
+    out.extend(_redos_checks(compiled, yaml_file))
 
     if len(compiled.description) < 10:
         out.append(

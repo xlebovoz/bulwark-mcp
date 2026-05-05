@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_REQUEST_LINE = 8 * 1024
 _MAX_HEADER_BYTES = 16 * 1024
+_REQUEST_TIMEOUT_S = 5.0
+_SNAPSHOT_TTL_S = 1.0
 
 
 @dataclass
@@ -35,24 +37,42 @@ class HealthState:
     """Mutable state surfaced by ``GET /health``.
 
     ``started_at`` is captured by ``run_proxy`` at startup. Counters
-    are queried on demand from the live :class:`Storage` so the
-    endpoint's body always reflects the durable audit log, not an
-    in-memory mirror that could drift after a write failure.
+    come from the live :class:`Storage` but are cached for 1 s
+    (``_SNAPSHOT_TTL_S``) — Week-4 audit fix to prevent a hostile
+    localhost peer from starving the writer by hammering ``/health``
+    and forcing a full table scan on every probe.
     """
 
     started_at: datetime
     storage: Storage
+    _cache: dict[str, Any] | None = None
+    _cache_ts: float = 0.0
+    _lock: asyncio.Lock | None = None
 
     async def snapshot(self) -> dict[str, Any]:
-        events_processed = await self.storage.event_count()
-        last_event_ts = await self._last_event_ts()
-        return {
-            "status": "ok",
-            "version": __version__,
-            "uptime_s": (datetime.now(UTC) - self.started_at).total_seconds(),
-            "events_processed": events_processed,
-            "last_event_ts": last_event_ts.isoformat() if last_event_ts else None,
-        }
+        if self._lock is None:
+            # Lazy init so the dataclass remains constructible without an
+            # event loop — useful in tests.
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            now = asyncio.get_running_loop().time()
+            if self._cache is not None and now - self._cache_ts < _SNAPSHOT_TTL_S:
+                # Refresh only the uptime (cheap); other fields are cached.
+                cached = dict(self._cache)
+                cached["uptime_s"] = (datetime.now(UTC) - self.started_at).total_seconds()
+                return cached
+            events_processed = await self.storage.event_count()
+            last_event_ts = await self._last_event_ts()
+            snap: dict[str, Any] = {
+                "status": "ok",
+                "version": __version__,
+                "uptime_s": (datetime.now(UTC) - self.started_at).total_seconds(),
+                "events_processed": events_processed,
+                "last_event_ts": last_event_ts.isoformat() if last_event_ts else None,
+            }
+            self._cache = dict(snap)
+            self._cache_ts = now
+            return snap
 
     async def _last_event_ts(self) -> datetime | None:
         rows = await self.storage.latest_events(limit=1)
@@ -73,7 +93,17 @@ async def serve(state: HealthState, *, port: int) -> asyncio.AbstractServer:
 
     async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            await _serve_one(state, reader, writer)
+            # Week-4 audit fix: per-connection wall-clock timeout closes
+            # the slowloris path — a peer that holds the socket open
+            # without sending a full request can no longer wedge an
+            # event-loop slot indefinitely.
+            await asyncio.wait_for(
+                _serve_one(state, reader, writer),
+                timeout=_REQUEST_TIMEOUT_S,
+            )
+        except TimeoutError:
+            with suppress(Exception):
+                await _respond(writer, 408, {"status": "request timeout"})
         except Exception as exc:
             logger.warning("health: handler raised %r", exc)
             with suppress(Exception):
@@ -83,7 +113,14 @@ async def serve(state: HealthState, *, port: int) -> asyncio.AbstractServer:
             with suppress(Exception):
                 await writer.wait_closed()
 
-    return await asyncio.start_server(_handle, host="127.0.0.1", port=port)
+    return await asyncio.start_server(
+        _handle,
+        host="127.0.0.1",
+        port=port,
+        # Bound the StreamReader buffer so a peer cannot ship megabytes
+        # on the request line before we reject it.
+        limit=_MAX_REQUEST_LINE,
+    )
 
 
 async def _serve_one(
@@ -142,6 +179,7 @@ _REASON: dict[int, str] = {
     400: "Bad Request",
     404: "Not Found",
     405: "Method Not Allowed",
+    408: "Request Timeout",
     431: "Request Header Fields Too Large",
     500: "Internal Server Error",
 }
