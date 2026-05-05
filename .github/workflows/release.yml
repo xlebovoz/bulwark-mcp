@@ -1,0 +1,46 @@
+name: GitHub release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # creating the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: vars.MCP_FIREWALL_DISABLE_RELEASE != 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract changelog section for this tag
+        id: changelog
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF##*/v}"
+          # Pull the section between "## [<tag>]" and the next "## [".
+          notes=$(awk -v ver="$tag" '
+            /^## \[/ { if (in_section) exit; if ($0 ~ "\\[" ver "\\]") { in_section = 1; next } }
+            in_section { print }
+          ' CHANGELOG.md)
+          if [ -z "$notes" ]; then
+            notes="See CHANGELOG.md."
+          fi
+          # github-script-friendly multi-line.
+          {
+            echo "notes<<EOF"
+            echo "$notes"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.notes }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'dev') }}

@@ -1,0 +1,60 @@
+name: Publish to test.pypi.org
+
+# Manual only — invoked from the Actions tab when you want to verify
+# packaging on a release-candidate revision before tagging for real.
+on:
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: "Pre-release suffix (e.g. .dev1, rc2). Empty = use pyproject version unchanged."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write   # OIDC trusted publishing on test.pypi.org
+
+jobs:
+  build_and_publish:
+    runs-on: ubuntu-latest
+    if: vars.MCP_FIREWALL_DISABLE_TEST_PUBLISH != 'true'
+    environment: testpypi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Apply optional version suffix
+        if: inputs.version_suffix != ''
+        run: |
+          python - <<EOF
+          import pathlib, re, tomllib
+          p = pathlib.Path("pyproject.toml")
+          src = p.read_text()
+          base = tomllib.loads(src)["project"]["version"]
+          new = f"{base}${{ inputs.version_suffix }}"
+          p.write_text(re.sub(r'^version = ".*"$', f'version = "{new}"', src, count=1, flags=re.M))
+          print(f"version: {base} -> {new}")
+          EOF
+
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Smoke-install from test.pypi.org
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/pip install \
+            --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            mcp-firewall
+          /tmp/check/bin/python -m mcp_firewall --version
