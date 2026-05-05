@@ -209,6 +209,54 @@ class TestInspectorWithClassifier:
         assert result.note == "skipped:rules_short_circuit"
         assert result.action == "block"
 
+    async def test_non_text_content_logs_skipped_reason(
+        self, builtin_engine: RulesEngine, tmp_path: Path
+    ) -> None:
+        # Week-3 audit fix: an image-only tool result must be ALLOWED with
+        # an explicit note so the user can see in audit that the binary
+        # content was forwarded uninspected (rules still scanned raw JSON).
+        async with Storage(tmp_path / "log.db") as storage:
+            calls = {"n": 0}
+
+            def handler(_req: httpx.Request) -> httpx.Response:
+                calls["n"] += 1
+                return httpx.Response(200, json={"response": "DATA"})
+
+            classifier = OllamaClassifier(
+                storage=storage, transport=httpx.MockTransport(handler)
+            )
+            try:
+                insp = Inspector(
+                    rules=builtin_engine,
+                    classifier=classifier,
+                    policy=_default_policy(),
+                )
+                raw = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 9,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "data": "<base64>",
+                                    "mimeType": "image/png",
+                                }
+                            ]
+                        },
+                    },
+                    separators=(",", ":"),
+                )
+                parsed, _ = parse_frame(raw)
+                result = await insp.inspect(
+                    raw=raw, parsed=parsed, direction="server_to_client"
+                )
+            finally:
+                await classifier.aclose()
+        assert calls["n"] == 0
+        assert result.note == "skipped:non_text_content"
+        assert result.action == "allow"
+
     async def test_classifier_skipped_for_too_short_text(
         self, builtin_engine: RulesEngine, tmp_path: Path
     ) -> None:

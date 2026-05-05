@@ -98,8 +98,11 @@ class Inspector:
         classifier_note: str = self._initial_classifier_note(direction, score)
 
         if classifier_note == "candidate" and self._classifier is not None:
-            classifier_text = _extract_classifiable_text(parsed)
-            classifier_note = self._size_gate(classifier_text)
+            classifier_text, shape_note = _extract_classifiable_text(parsed)
+            if shape_note != "candidate":
+                classifier_note = shape_note
+            else:
+                classifier_note = self._size_gate(classifier_text)
             if classifier_note == "candidate" and classifier_text is not None:
                 budget_remaining_s = max(
                     0.001,
@@ -207,28 +210,41 @@ class Inspector:
         return "candidate"
 
 
-def _extract_classifiable_text(parsed: ParsedMessage | None) -> str | None:
-    """Return the text the agent will ingest, or ``None`` if not a candidate.
+def _extract_classifiable_text(parsed: ParsedMessage | None) -> tuple[str | None, str]:
+    """Return ``(text, shape_note)``.
 
-    We look for the standard MCP ``content`` array on a successful tool
-    result. Anything else (init, list_tools, errors, notifications) is
-    not a candidate for prompt-injection inspection in v0.2.
+    Possible ``shape_note`` values:
+
+    - ``"candidate"``         — caller should run the size gate on the text.
+    - ``"skipped:not_candidate"`` — frame is not a tool-result-shaped response.
+    - ``"skipped:non_text_content"`` — frame *is* a tool-result candidate
+      (has ``result.content`` array) but contains only non-text blocks
+      (images, resources, vendor extensions). Week-3 audit fix: the LLM
+      cannot inspect bytes; we surface the skip reason in the audit log.
     """
     if not isinstance(parsed, MCPResponse) or parsed.result is None:
-        return None
+        return None, "skipped:not_candidate"
     result = parsed.result
     if not isinstance(result, dict):
-        return None
+        return None, "skipped:not_candidate"
     content = result.get("content")
     if not isinstance(content, list) or not content:
-        return None
+        return None, "skipped:not_candidate"
+
     parts: list[str] = []
     for block in content:
         if isinstance(block, dict) and block.get("type") == "text":
             text = block.get("text")
             if isinstance(text, str):
                 parts.append(text)
-    return "\n".join(parts) if parts else None
+
+    if not parts:
+        # Result has content blocks but none are text — image, resource,
+        # or vendor extension. Detector has nothing to chew on; we
+        # forward the original and surface the reason in audit.
+        return None, "skipped:non_text_content"
+
+    return "\n".join(parts), "candidate"
 
 
 def _verdict_for(action: DetectionAction) -> DetectionVerdict:
