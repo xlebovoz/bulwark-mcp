@@ -233,9 +233,10 @@ Architecture decisions land as ADRs in `docs/adr/`. Four ADRs ship with Week 2; 
 
 ## Contributing
 
-Issues and PRs welcome. Two house rules:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — setup, rule-pack authoring with the promotion ladder (community → built-in), and integration-test conventions. Security disclosures go through GitHub Security Advisories per [SECURITY.md](SECURITY.md).
 
-1. **Conventional commits** (`feat:`, `fix:`, `docs:`, …). The CI lints them.
-2. **Tests for behaviour, not for implementation.** If a refactor leaves the API unchanged, the existing tests must still pass.
+If you find a real-world prompt-injection PoC that `mcp-firewall` doesn't catch, please open an issue with a reproduction. That's the single most valuable contribution today.
 
-If you find a real-world prompt-injection PoC that `mcp-firewall` doesn't catch, please open an issue with a reproduction. That's the most valuable contribution you can make right now.
+### Community files (in progress)
+
+`CODE_OF_CONDUCT.md`, `.github/ISSUE_TEMPLATE/*`, `.github/PULL_REQUEST_TEMPLATE.md`, and `.github/labels.yml` are planned for the next iteration. `CONTRIBUTING.md` and `SECURITY.md` are published.
