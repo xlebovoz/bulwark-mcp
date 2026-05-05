@@ -6,6 +6,89 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-05
+
+### Added
+
+- **Community readiness.**
+  - `CONTRIBUTING.md` — setup, rule-pack authoring, the **promotion ladder** (community → built-in: basic lint vs strict + 2 tests).
+  - `SECURITY.md` — disclosure flow via GitHub Security Advisories.
+  - (CODE_OF_CONDUCT, issue/PR templates, labels — deferred to manual.)
+- **`mcp-firewall stats`** — local-only summary of the audit log: verdict
+  counts, top-5 rules, latency p50/p95. Rich table by default, versioned
+  JSON via `--json`. `--since 7d|24h|30m` window selector.
+- **`mcp-firewall rules lint [--strict]`** — validate community-contributed
+  YAML packs. Strict mode enforces `severity_tier`, `attack_examples`,
+  HTTP(S) `source` URL, sufficient-length `description`, and that
+  attack-examples actually match the regex.
+- **Loopback health endpoint** — `mcp-firewall run --health-port N` binds
+  `127.0.0.1:N` and serves `GET /health` returning JSON status. For
+  k8s/docker liveness probes. Loopback-only by design, no auth, no TLS.
+- **Opt-in anonymous telemetry** — `MCP_FIREWALL_TELEMETRY=true` enables
+  a daily anonymous payload (version, OS, Python version, event counts).
+  **No rule names, no traffic content, no fingerprinting.**
+  - `MCP_FIREWALL_TELEMETRY_URL` env override.
+  - `MCP_FIREWALL_TELEMETRY_URL=disabled` kill-switch (still writes local log).
+  - First-run banner in stderr, single-shot per process.
+  - Local log at `<db-dir>/telemetry.log`, written before each HTTP call.
+  - `installation_id` UUID at `<db-dir>/installation_id`, deletable to reset.
+  - Silent fail on network errors.
+  - Files written with mode `0600`.
+- **Integration test fixtures** for `github`, `brave-search`, `postgres` MCP
+  servers — smoke + benign + attack scenarios per server, with no real
+  API calls.
+- `docs/OBSERVABILITY.md` — full telemetry schema + privacy contract.
+- `docs/INTEGRATIONS.md` — table of tested MCP servers + config snippets.
+- `docs/AUDIT-REPORT-week3.md` — adversarial review findings (10 total;
+  4 fixed in this milestone, 6 deferred to v0.4 with explicit plans).
+- ADR-0005 — observability and telemetry privacy.
+
+### Changed
+
+- **Detection layer (audit-fix carry-overs from v0.2):**
+  - Three-pass scan in `RulesEngine.detect`: raw + within-word-normalised
+    (NFKC + invisible-char strip) + between-word-normalised (NFKC +
+    invisibles → space + whitespace collapse). Catches per-word zero-
+    width insertion and full-width Latin substitutions that v0.2 missed.
+  - JSON-RPC batch frames are now inspected **per member**. The audit
+    log records per-member verdicts; if any member blocks, the whole
+    batch is replaced with a 1-element JSON-RPC batch reply (valid
+    array shape).
+  - Non-text content (image/resource blocks in `result.content`) now
+    surfaces `note=skipped:non_text_content` so operators can see
+    binary content was forwarded uninspected.
+  - LLM classifier truncation is now one-end (head-only) — closes the
+    seam-evasion path of v0.2's middle-truncation. Frames over the
+    truncation threshold get `note=ok:truncated=<chars>` in audit.
+
+### Security
+
+- `platform.release()` is now reduced to its first numeric component
+  before telemetry transmission — full kernel build strings (e.g.
+  `5.4.0-foo-bar`) were uniquely identifying custom kernels. Privacy
+  contract restored.
+- `data/telemetry.log` and `data/installation_id` are created with
+  mode `0600` so co-tenants on a shared machine cannot read payloads.
+- `_trace_id` no longer mixes the entire raw frame into the SHA1 seed
+  — `os.urandom(8)` already provides unguessability and the previous
+  approach hashed up to 8 MiB on the hot block path.
+- Truncation events are now visible in audit via `note=ok:truncated=N`.
+
+### Known limitations (v0.4 backlog)
+
+- ReDoS via community-contributed regex (no pattern-time budget yet) —
+  zero community packs ship in v0.3, so the threat is theoretical
+  until first PR lands.
+- JSON-RPC batch block emits a 1-element reply array; non-blocking
+  members lose their `id` correlation. Per-id error synthesis tracked
+  for v0.4.
+- Health endpoint slowloris exposure (loopback-only mitigates blast
+  radius) — `wait_for(timeout=5s)` + StreamReader byte cap planned.
+- Cross-script homoglyphs (Cyrillic look-alikes for Latin) still
+  bypass the detector — handling needs a confusables table (~10 MB).
+- Stats / telemetry build a 64 KB cap on `det_rules` JSON-parse to
+  avoid pathological-row CPU spikes.
+
 ## [0.2.0] — 2026-05-04
 
 ### Added
@@ -100,6 +183,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - 27 pytest cases including an end-to-end test that spawns the real CLI
   as a subprocess and asserts a full round-trip through `cat`.
 
-[Unreleased]: https://github.com/churik/mcp-firewall/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/churik/mcp-firewall/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/churik/mcp-firewall/releases/tag/v0.1.0
+[Unreleased]: https://github.com/churik5/mcp-firewall/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/churik5/mcp-firewall/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/churik5/mcp-firewall/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/churik5/mcp-firewall/releases/tag/v0.1.0
