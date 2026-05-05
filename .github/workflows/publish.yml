@@ -17,7 +17,7 @@ jobs:
   build:
     name: Build wheel + sdist
     runs-on: ubuntu-latest
-    if: vars.MCP_FIREWALL_DISABLE_PUBLISH != 'true'
+    if: vars.BULWARK_MCP_DISABLE_PUBLISH != 'true'
     steps:
       - uses: actions/checkout@v4
 

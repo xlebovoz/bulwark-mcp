@@ -17,7 +17,7 @@ permissions:
 jobs:
   build_and_publish:
     runs-on: ubuntu-latest
-    if: vars.MCP_FIREWALL_DISABLE_TEST_PUBLISH != 'true'
+    if: vars.BULWARK_MCP_DISABLE_TEST_PUBLISH != 'true'
     environment: testpypi
     steps:
       - uses: actions/checkout@v4

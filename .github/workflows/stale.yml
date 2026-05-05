@@ -12,7 +12,7 @@ permissions:
 jobs:
   stale:
     runs-on: ubuntu-latest
-    if: vars.MCP_FIREWALL_DISABLE_STALE != 'true'
+    if: vars.BULWARK_MCP_DISABLE_STALE != 'true'
     steps:
       - uses: actions/stale@v9
         with:

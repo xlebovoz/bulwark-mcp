@@ -10,7 +10,7 @@ permissions:
 jobs:
   label:
     runs-on: ubuntu-latest
-    if: vars.MCP_FIREWALL_DISABLE_AUTOLABEL != 'true'
+    if: vars.BULWARK_MCP_DISABLE_AUTOLABEL != 'true'
     steps:
       - uses: actions/github-script@v7
         with:

@@ -102,7 +102,7 @@ section it falls back to "See CHANGELOG.md" and still posts the release.
 
 Each workflow respects a repo variable. To skip publishing for one
 release without editing files, set
-`MCP_FIREWALL_DISABLE_PUBLISH=true` in the repo settings before
-pushing the tag. Same pattern for `MCP_FIREWALL_DISABLE_RELEASE`,
-`MCP_FIREWALL_DISABLE_TEST_PUBLISH`, etc. Remember to unset it
+`BULWARK_MCP_DISABLE_PUBLISH=true` in the repo settings before
+pushing the tag. Same pattern for `BULWARK_MCP_DISABLE_RELEASE`,
+`BULWARK_MCP_DISABLE_TEST_PUBLISH`, etc. Remember to unset it
 afterwards.

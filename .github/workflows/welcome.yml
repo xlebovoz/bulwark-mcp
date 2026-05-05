@@ -13,7 +13,7 @@ permissions:
 jobs:
   welcome:
     runs-on: ubuntu-latest
-    if: vars.MCP_FIREWALL_DISABLE_WELCOME != 'true'
+    if: vars.BULWARK_MCP_DISABLE_WELCOME != 'true'
     steps:
       - uses: actions/first-interaction@v1
         with:
