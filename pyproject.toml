@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bulwark-mcp"
-version = "0.4.1"
+version = "0.4.2"
 description = "Open-source firewall for MCP servers — catches indirect prompt injection before it reaches your AI agent"
 readme = "README.md"
 requires-python = ">=3.11"
