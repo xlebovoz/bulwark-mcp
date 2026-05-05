@@ -192,10 +192,18 @@ class OllamaClassifier:
     # ------------------------------------------------------------------
 
     def _truncate(self, text: str) -> str:
+        """Cut from the END only (Week-3 audit fix).
+
+        v0.2 kept ``head + tail`` with a marker in between. An attacker
+        could place a marker straddling the discarded middle so neither
+        half contained a complete pattern. v0.3 takes the first
+        ``max_input_chars`` and stops; injections beyond that rely on
+        the rules detector (which scans the *full* raw frame and is
+        unbounded).
+        """
         if len(text) <= self._max_input_chars:
             return text
-        half = self._max_input_chars // 2
-        return text[:half] + "\n…[truncated]…\n" + text[-half:]
+        return text[: self._max_input_chars] + "\n…[truncated]"
 
     async def _call_ollama(self, content: str) -> str:
         prompt = _PROMPT_TEMPLATE.format(content=content)
