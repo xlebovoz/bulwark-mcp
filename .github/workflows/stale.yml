@@ -1,0 +1,34 @@
+name: Stale issues
+
+on:
+  schedule:
+    - cron: "0 12 * * *"   # daily, 12:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    if: vars.MCP_FIREWALL_DISABLE_STALE != 'true'
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 83
+          days-before-close: 7
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: "security,pinned,help wanted"
+          exempt-pr-labels: "pinned"
+          stale-issue-message: |
+            This issue has been quiet for 83 days. If it still matters, drop a comment with whatever progress or new info you have and I'll re-open the conversation. Otherwise it'll close in 7 days.
+
+            No hard feelings either way — the repo is small enough that I'd rather close stale items than have them rot in the backlog.
+          stale-pr-message: |
+            This PR hasn't seen activity in 83 days. If you'd like to push it forward, rebase on `main` and reply with a status update. Otherwise it'll close in 7 days; you can reopen any time.
+          close-issue-message: |
+            Closing as stale. If you still hit this, please open a fresh issue — that's easier than reviving an old thread, and the rule packs / detector behaviour have likely changed since.
+          close-pr-message: |
+            Closing as stale. Reopen when you have time to bring it forward. Thanks for the work that's already in here.

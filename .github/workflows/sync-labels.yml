@@ -1,0 +1,24 @@
+name: Sync labels
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/labels.yml"]
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: vars.MCP_FIREWALL_DISABLE_LABELS != 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crazy-max/ghaction-github-labeler@v5
+        with:
+          yaml-file: .github/labels.yml
+          # Don't delete labels we didn't author — the repo may have
+          # legacy ones from issues filed before this workflow existed.
+          skip-delete: true
