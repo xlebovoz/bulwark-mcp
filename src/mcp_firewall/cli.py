@@ -21,6 +21,7 @@ from .config import Settings, resolve_settings
 from .detectors.llm import OllamaClassifier
 from .detectors.rules import RulesEngine
 from .inspector import Inspector
+from .lint import lint_path
 from .models import parse_frame
 from .policy import Policy, default_policy
 from .proxy import run_proxy
@@ -432,6 +433,50 @@ def _compact(value: str, max_len: int = 120) -> str:
     if len(s) > max_len:
         return s[: max_len - 1] + "…"
     return s
+
+
+@main.group("rules")
+def cmd_rules() -> None:
+    """Tools for authoring and validating rule packs."""
+
+
+@cmd_rules.command("lint")
+@click.argument(
+    "target",
+    type=click.Path(exists=True, path_type=Path),
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Apply built-in-pack quality gates (severity_tier, attack_examples, source URL).",
+)
+def cmd_rules_lint(target: Path, strict: bool) -> None:
+    """Validate a YAML rule pack (file or directory).
+
+    Exit 0 = passes (basic mode tolerates missing recommendations).
+    Exit 1 = errors (any mode) or warnings (strict mode only).
+    """
+    issues = lint_path(target, strict=strict)
+    errors = [i for i in issues if i.severity == "error"]
+    warnings = [i for i in issues if i.severity == "warning"]
+
+    out = Console()
+    for issue in issues:
+        style = "red" if issue.severity == "error" else "yellow"
+        out.print(f"[{style}]{issue.render()}[/{style}]")
+
+    summary_lines = []
+    if errors:
+        summary_lines.append(f"[bold red]{len(errors)} error(s)[/bold red]")
+    if warnings:
+        summary_lines.append(f"[bold yellow]{len(warnings)} warning(s)[/bold yellow]")
+    if not summary_lines:
+        out.print("[bold green]ok[/bold green]")
+    else:
+        out.print(" • ".join(summary_lines))
+
+    fail = bool(errors) or (strict and bool(warnings))
+    sys.exit(1 if fail else 0)
 
 
 if __name__ == "__main__":  # pragma: no cover
