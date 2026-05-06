@@ -257,6 +257,25 @@ A handful of questions that come up often. The full set lives in [`docs/FAQ.md`]
 
 **How do I report a false positive?** Open a GitHub issue with the input that fired and the rule id. `bulwark logs --tail 5` shows both. If the rule is in `src/bulwark_mcp/rules/builtin/`, I'll fix the regex; if it's a community pack, the original author gets pinged on the issue. There's no rate limit on reports — please file even if you're not sure it's a false positive.
 
+## How does this compare to other tools?
+
+The MCP-security space is small but growing. bulwark-mcp sits in a specific corner of it: local, prompt-injection-focused, MCP-native. Here's how it differs from neighbouring tools:
+
+| Tool                                  | Open source | Self-hosted | MCP-native | Focus                          | LLM classifier      |
+|---------------------------------------|-------------|-------------|------------|--------------------------------|---------------------|
+| **bulwark-mcp** (this)                | ✅ AGPL     | ✅          | ✅         | Indirect prompt injection      | Local Ollama        |
+| [mcp-firewall](https://pypi.org/project/mcp-firewall/) (Robert Ressl) | ✅ AGPL | ✅ | ✅ | Authorisation, RBAC, compliance | None                |
+| [Lakera Guard](https://www.lakera.ai/) | ❌          | ❌ SaaS     | ❌ general | General prompt injection       | Hosted LLM          |
+| [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) | ❌ | ❌ SaaS | ❌ general | Logging + cost tracking + WAF  | Hosted LLM          |
+| [Rebuff](https://github.com/protectai/rebuff) | ✅ Apache | ✅ | ❌ general | Prompt injection (apps) | Hosted OpenAI       |
+| [PromptArmor](https://promptarmor.com) | ❌          | ❌ SaaS     | ❌ general | Compliance + prompt injection  | Hosted              |
+
+Three things distinguish bulwark-mcp:
+
+1. **Local-first.** No data leaves your machine — the LLM classifier talks to a local Ollama instance, telemetry is opt-in and aggregated. SaaS competitors require sending tool outputs to their cloud, which defeats the point if those outputs contain credentials.
+2. **MCP-specific threat model.** Other tools treat prompt injection as a generic LLM input problem. bulwark-mcp inspects JSON-RPC frames, knows the difference between `tools/call` and `tools/list`, and replaces blocked tool results with structured `isError: true` responses the agent will actually parse.
+3. **Different from `mcp-firewall` (Robert Ressl's).** Same niche, different shape. Robert's project focuses on OPA/Rego policies, RBAC, and compliance reporting (DORA, FINMA, SOC 2). bulwark-mcp focuses on detecting indirect prompt injection in tool results with regex + local LLM classifier. Both are AGPL; pick the one that matches your threat model.
+
 ## Roadmap
 
 | Milestone   | Status | Scope                                                                       |
