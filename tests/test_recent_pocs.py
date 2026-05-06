@@ -16,9 +16,7 @@ import pytest
 from bulwark_mcp.detectors.rules import RulesEngine
 
 # Same anchor as tests/test_detectors_rules.py.
-_BUILTIN_DIR = (
-    Path(__file__).resolve().parent.parent / "src" / "bulwark_mcp" / "rules" / "builtin"
-)
+_BUILTIN_DIR = Path(__file__).resolve().parent.parent / "src" / "bulwark_mcp" / "rules" / "builtin"
 
 
 @pytest.fixture(scope="module")
@@ -134,26 +132,20 @@ BENIGN_BRACKETED = [
 
 
 @pytest.mark.parametrize("payload", CATO_ATLASSIAN_PAYLOADS)
-def test_cato_atlassian_living_off_ai_is_caught(
-    builtin_engine: RulesEngine, payload: str
-) -> None:
+def test_cato_atlassian_living_off_ai_is_caught(builtin_engine: RulesEngine, payload: str) -> None:
     """Cato CTRL Atlassian PoC patterns must trigger at least one rule."""
     result = builtin_engine.detect(payload, direction="server_to_client")
     assert result.is_hit, (
-        f"No rule fired on Cato Atlassian payload variant. "
-        f"Payload starts: {payload[:120]!r}…"
+        f"No rule fired on Cato Atlassian payload variant. Payload starts: {payload[:120]!r}…"
     )
 
 
 @pytest.mark.parametrize("payload", INVARIANTLABS_GITHUB_PAYLOADS)
-def test_invariantlabs_github_mcp_is_caught(
-    builtin_engine: RulesEngine, payload: str
-) -> None:
+def test_invariantlabs_github_mcp_is_caught(builtin_engine: RulesEngine, payload: str) -> None:
     """Invariantlabs GitHub MCP PoC patterns must trigger at least one rule."""
     result = builtin_engine.detect(payload, direction="server_to_client")
     assert result.is_hit, (
-        f"No rule fired on Invariantlabs GitHub payload variant. "
-        f"Payload starts: {payload[:120]!r}…"
+        f"No rule fired on Invariantlabs GitHub payload variant. Payload starts: {payload[:120]!r}…"
     )
 
 
@@ -166,9 +158,7 @@ def test_benign_atlassian_ticket_does_not_trigger(builtin_engine: RulesEngine) -
         "Could you help me reset my session? Thanks."
     )
     result = builtin_engine.detect(benign, direction="server_to_client")
-    assert not result.is_hit, (
-        f"Benign ticket triggered rules (false positive): {result.hits}"
-    )
+    assert not result.is_hit, f"Benign ticket triggered rules (false positive): {result.hits}"
 
 
 @pytest.mark.parametrize("text", BENIGN_BRACKETED)
