@@ -85,6 +85,7 @@ Architecture lives in the six ADRs under [`docs/adr/`](docs/adr/). The short ver
 ```bash
 pipx install bulwark-mcp
 bulwark --version
+bulwark version          # extended Python/platform/rules/DB details for bug reports
 ```
 
 `pipx` installs the CLI in its own venv on `$PATH` — that's what you want for a global tool that spawns child processes. Plain `pip install --user` works too if you don't have pipx around.

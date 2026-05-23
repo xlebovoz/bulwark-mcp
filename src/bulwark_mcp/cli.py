@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import platform
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -627,6 +628,51 @@ def cmd_doctor(db_path: Path | None, config: Path | None) -> None:
     results, overall = doctor_sync(settings)
     _print_doctor_table(results, overall)
     sys.exit({"pass": 0, "warn": 1, "fail": 2}[overall])
+
+
+@main.command("version")
+@click.option(
+    "--db-path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Override the audit log location.",
+)
+@click.option(
+    "--config",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to a YAML config file.",
+)
+def cmd_version(db_path: Path | None, config: Path | None) -> None:
+    """Print extended version and environment information."""
+    settings = resolve_settings(cli_db_path=db_path, cli_config=config)
+    Console().print(_render_version_info(settings))
+
+
+def _render_version_info(settings: Settings) -> str:
+    rules = RulesEngine.from_directory(settings.detector.rules_dir)
+    packs = sorted(settings.detector.rules_dir.glob("*.yaml"))
+    schema = asyncio.run(_read_schema_version(settings))
+    detector = "on" if settings.detector.enabled else "off (config default)"
+    install_path = Path(__file__).resolve().parent
+    implementation = getattr(sys.implementation, "name", "Python")
+
+    return "\n".join(
+        (
+            f"bulwark-mcp {__version__}",
+            f"Python {platform.python_version()} ({implementation}, {sys.platform})",
+            f"Platform: {platform.platform()}",
+            f"Rules loaded: {len(rules)} from {len(packs)} packs",
+            f"Detector: {detector}",
+            f"DB schema: v{schema}",
+            f"Install path: {install_path}",
+        )
+    )
+
+
+async def _read_schema_version(settings: Settings) -> int:
+    async with Storage(settings.db_path) as storage:
+        return await storage._current_schema_version()
 
 
 def _print_doctor_table(results: list[CheckResult], overall: str) -> None:
