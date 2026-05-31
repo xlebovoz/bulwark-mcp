@@ -56,3 +56,4 @@ data/*.db-shm
 config.yaml
 !config.example.yaml
 launch/
+.claude/
