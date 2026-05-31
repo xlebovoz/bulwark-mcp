@@ -38,9 +38,7 @@ def corpus() -> list[red_team.AttackClass]:
 
 
 class TestRedTeamCorpus:
-    def test_corpus_loads_and_is_well_formed(
-        self, corpus: list[red_team.AttackClass]
-    ) -> None:
+    def test_corpus_loads_and_is_well_formed(self, corpus: list[red_team.AttackClass]) -> None:
         # Structural contract: at least one class, every class has attacks,
         # every attack has non-empty text, enums are in range, ids unique.
         assert corpus, "corpus must define at least one class"
