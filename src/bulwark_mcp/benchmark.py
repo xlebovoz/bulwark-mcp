@@ -143,8 +143,8 @@ async def _bench_end_to_end(*, iters: int) -> BenchResult:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    assert proc.stdin is not None
-    assert proc.stdout is not None
+    if proc.stdin is None or proc.stdout is None:
+        raise RuntimeError("subprocess stdin/stdout pipes were not created")
 
     frame = (
         json.dumps(
