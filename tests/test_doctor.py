@@ -9,9 +9,11 @@ from unittest import mock
 import httpx
 import pytest
 
+from bulwark_mcp.capability import CapabilitySettings
 from bulwark_mcp.config import DetectorSettings, Settings
 from bulwark_mcp.doctor import (
     CheckResult,
+    _check_capability,
     _check_db,
     _check_ollama,
     _check_python,
@@ -176,6 +178,31 @@ class TestRulesPolicyCheck:
 
 
 # ---------------------------------------------------------------------
+# Capability check
+# ---------------------------------------------------------------------
+
+
+class TestCapabilityCheck:
+    def test_warn_when_no_allowlist(self, tmp_path: Path) -> None:
+        # Default Settings has an empty allowlist → fail-open → WARN, never FAIL.
+        result = _check_capability(_settings_in(tmp_path))
+        assert result.status == "warn"
+        assert "inactive" in result.detail
+        assert result.suggestion is not None
+
+    def test_pass_when_allowlist_configured(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "log.db",
+            capability=CapabilitySettings(allowed_tools=("fs.read",), server_name="fs"),
+        )
+        result = _check_capability(settings)
+        assert result.status == "pass"
+        assert "active" in result.detail
+        assert "1 tool" in result.detail
+        assert "fs" in result.detail
+
+
+# ---------------------------------------------------------------------
 # Aggregate
 # ---------------------------------------------------------------------
 
@@ -192,6 +219,12 @@ class TestAggregate:
     async def test_run_checks_returns_in_order(self, tmp_path: Path) -> None:
         settings = _settings_in(tmp_path, llm_enabled=False)
         results = await run_checks(settings)
-        # Order is documented: python, ollama, db, rules+policy.
+        # Order is documented: python, ollama, db, rules+policy, capability.
         names = [r.name for r in results]
-        assert names == ["Python version", "Ollama", "Audit log DB", "Rules + policy"]
+        assert names == [
+            "Python version",
+            "Ollama",
+            "Audit log DB",
+            "Rules + policy",
+            "Capability filter",
+        ]

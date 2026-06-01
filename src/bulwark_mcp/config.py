@@ -7,14 +7,22 @@ Resolution lives here so the CLI and the proxy share one source of truth.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from .capability import CapabilitySettings
+
 ENV_DB = "BULWARK_DB"
 ENV_CONFIG = "BULWARK_CONFIG"
+
+# A valid allowlist entry is exactly ``<server>.<tool>``: a non-empty server
+# segment, a single dot, a non-empty tool segment, and no whitespace. This
+# rejects bare names, leading/trailing dots, and multi-dot shapes.
+_TOOL_NAME_RE = re.compile(r"^[^.\s]+\.[^.\s]+$")
 
 DEFAULT_DB_RELATIVE = Path("data/log.db")
 DEFAULT_QUEUE_MAX = 10_000
@@ -54,6 +62,7 @@ class Settings:
     batch_size: int = DEFAULT_BATCH_SIZE
     batch_interval_ms: int = DEFAULT_BATCH_INTERVAL_MS
     detector: DetectorSettings = field(default_factory=DetectorSettings)
+    capability: CapabilitySettings = field(default_factory=CapabilitySettings)
 
     @property
     def batch_interval_s(self) -> float:
@@ -123,12 +132,18 @@ def resolve_settings(
         cli_policies=cli_policies,
     )
 
+    capability_section = file_data.get("capability", {}) if isinstance(file_data, dict) else {}
+    if not isinstance(capability_section, dict):
+        capability_section = {}
+    capability = _resolve_capability(capability_section)
+
     return Settings(
         db_path=db_path.resolve(),
         queue_max=int(storage_section.get("queue_max", DEFAULT_QUEUE_MAX)),
         batch_size=int(storage_section.get("batch_size", DEFAULT_BATCH_SIZE)),
         batch_interval_ms=int(storage_section.get("batch_interval_ms", DEFAULT_BATCH_INTERVAL_MS)),
         detector=detector,
+        capability=capability,
     )
 
 
@@ -169,3 +184,32 @@ def _resolve_detector(
         max_latency_ms=int(section.get("max_latency_ms", 200)),
         short_circuit_threshold=float(section.get("short_circuit_threshold", 0.9)),
     )
+
+
+def _resolve_capability(section: dict[str, Any]) -> CapabilitySettings:
+    """Build :class:`CapabilitySettings` from the YAML ``capability`` section.
+
+    The whole section is optional; an absent or empty ``allowed_tools`` means
+    fail-open (the proxy passes every tool call through and logs a startup
+    warning). Each entry must be a valid ``<server>.<tool>`` name — anything
+    else is rejected here, at load time, with a clear error. Duplicate
+    entries are collapsed silently (membership is the only thing that
+    matters). The allowlist is YAML-only — there is no env-var or CLI
+    override, because list-valued env vars are too awkward to be useful.
+    """
+    raw_tools = section.get("allowed_tools", []) or []
+    if not isinstance(raw_tools, list):
+        raise ValueError("capability.allowed_tools must be a list of '<server>.<tool>' strings")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for entry in raw_tools:
+        if not isinstance(entry, str) or not _TOOL_NAME_RE.match(entry):
+            raise ValueError(
+                f"capability.allowed_tools entry {entry!r} is not a valid '<server>.<tool>' "
+                "name (non-empty server and tool, exactly one dot, no whitespace)"
+            )
+        if entry not in seen:
+            seen.add(entry)
+            deduped.append(entry)
+    server_name = str(section.get("server_name", "") or "")
+    return CapabilitySettings(allowed_tools=tuple(deduped), server_name=server_name)

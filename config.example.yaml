@@ -47,3 +47,19 @@ detector:
     cache_ttl_s: 86400              # SHA-256 verdict cache TTL
     circuit_threshold: 3            # consecutive failures to open the breaker
     circuit_open_s: 60              # how long the breaker stays open
+
+# --- Capability filter ----------------------------------------------------
+# Coarse, name-based tool allowlist, checked on client->server frames BEFORE
+# the detector cascade. Off by default (fail-open): with no allowlist every
+# tool call passes through and the proxy logs a startup warning. YAML-only —
+# there is no CLI flag or env var for the allowlist.
+capability:
+  # Prepended to each incoming tool name to form the <server>.<tool> key
+  # matched against allowed_tools. Set it to a short label for the MCP
+  # server this proxy fronts.
+  server_name: ""
+  # Exact-match allowlist of <server>.<tool> names. No wildcards. Leave
+  # empty to keep the fail-open default.
+  allowed_tools: []
+  #   - filesystem.read
+  #   - github.create_issue
