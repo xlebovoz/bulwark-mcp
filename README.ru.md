@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/churik5/bulwark-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/churik5/bulwark-mcp/actions/workflows/ci.yml) [![Python: 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-Локальный прокси-сервер, который перехватывает результаты внедрения команд в инструмент до того, как их прочитает ваш агент. Автономный хостинг, по умолчанию телеметрия отсутствует, ~200 мс p95 при включенном классификаторе LLM
+Локальный прокси-сервер, который перехватывает результаты промпт-инъекций до того, как их прочитает ваш агент. Автономный хостинг, по умолчанию телеметрия отсутствует, ~200 мс p95 при включенном классификаторе LLM
 
 ![bulwark-mcp blocking a real prompt injection attack in real time](docs/demo.gif)
 
@@ -265,12 +265,12 @@ ruff check . && ruff format --check . && mypy src/ tests/ && pytest -q
 
 | Tool                                  | Open source | Self-hosted | MCP-native | Focus                          | LLM classifier      |
 |---------------------------------------|-------------|-------------|------------|--------------------------------|---------------------|
-| **bulwark-mcp** (this)                | ✅ AGPL     | ✅          | ✅         | Непрямое внедрение команд      | Local Ollama        |
+| **bulwark-mcp** (this)                | ✅ AGPL     | ✅          | ✅         | Непрямая промпт-инъекция      | Local Ollama        |
 | [mcp-firewall](https://pypi.org/project/mcp-firewall/) (Robert Ressl) | ✅ AGPL | ✅ | ✅ | Авторизация, RBAC, комплаенс | None                |
-| [Lakera Guard](https://www.lakera.ai/) | ❌          | ❌ SaaS     | ❌ general | Общее внедрение команд       | Hosted LLM          |
+| [Lakera Guard](https://www.lakera.ai/) | ❌          | ❌ SaaS     | ❌ general | Общая промпт-инъекция      | Hosted LLM          |
 | [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) | ❌ | ❌ SaaS | ❌ general | Логирование + трекинг затрат + WAF  | Hosted LLM          |
-| [Rebuff](https://github.com/protectai/rebuff) | ✅ Apache | ✅ | ❌ general | Внедрение команд (приложения) | Hosted OpenAI       |
-| [PromptArmor](https://promptarmor.com) | ❌          | ❌ SaaS     | ❌ general | Комплаенс + внедрение команд	  | Hosted              |
+| [Rebuff](https://github.com/protectai/rebuff) | ✅ Apache | ✅ | ❌ general | Промпт-инъекция (приложения) | Hosted OpenAI       |
+| [PromptArmor](https://promptarmor.com) | ❌          | ❌ SaaS     | ❌ general | Комплаенс + промпт-инъекция	  | Hosted              |
 
 Bulwark-mcp отличает три вещи:
 
@@ -299,4 +299,4 @@ Bulwark-mcp отличает три вещи:
 
 Смотрите [CONTRIBUTING.md](CONTRIBUTING.md) полное руководство по настройке, разработке пакетов правил с помощью лестницы продвижения (сообщество → встроенный) и соглашения об интеграционном тестировании. Информация о безопасности раскрывается в рекомендациях по безопасности на GitHub в соответствии с [SECURITY.md](SECURITY.md).
 
-Если вы обнаружите, что PoC для быстрого ввода данных в реальном мире не работает в bulwark-mcp, пожалуйста, откройте выпуск с воспроизведением. Это самый ценный вклад на сегодняшний день.
+Если вы обнаружите, что PoC для промпт-инъекции в реальном мире не работает в bulwark-mcp, пожалуйста, откройте выпуск с воспроизведением. Это самый ценный вклад на сегодняшний день.
