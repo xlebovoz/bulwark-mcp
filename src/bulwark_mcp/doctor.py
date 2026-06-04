@@ -1,12 +1,12 @@
 """bulwark doctor — environment diagnostic.
 
-Runs four checks and prints a Rich table with PASS / WARN / FAIL plus
+Runs five checks and prints a Rich table with PASS / WARN / FAIL plus
 a short suggestion per failed check. Off the hot path; safe to run
 any time.
 
 The checks are deliberately narrow. We don't try to predict every
-deployment shape; we just look at the four things that account for
-~95% of new-user issues:
+deployment shape; we just look at the things that account for ~95% of
+new-user issues:
 
 1. Python ≥ 3.11 (the runtime contract).
 2. Ollama listening + the configured model loaded (warn if not — the
@@ -15,6 +15,9 @@ deployment shape; we just look at the four things that account for
 4. The shipped rules pack loads cleanly and the default policy
    validates. If the user provided a custom policies.yaml, we lint
    that too.
+5. The capability filter: OK when an allowlist is configured, WARN
+   (never FAIL) when it is empty — fail-open means every tool call
+   passes through, which we surface rather than block silently.
 """
 
 from __future__ import annotations
@@ -44,12 +47,13 @@ class CheckResult:
 
 
 async def run_checks(settings: Settings) -> list[CheckResult]:
-    """Run all four checks and return their results in display order."""
+    """Run all five checks and return their results in display order."""
     return [
         _check_python(),
         await _check_ollama(settings),
         await _check_db(settings),
         await _check_rules_and_policy(settings),
+        _check_capability(settings),
     ]
 
 
@@ -208,6 +212,30 @@ async def _check_rules_and_policy(settings: Settings) -> CheckResult:
         detail=(
             f"{len(rules)} rules loaded from {det.rules_dir}; "
             f"policy '{policy_origin}' has {len(policy)} rule(s) over default '{policy.default}'"
+        ),
+    )
+
+
+def _check_capability(settings: Settings) -> CheckResult:
+    """Report the capability filter's state. Never fails — an empty
+    allowlist is the documented fail-open default, surfaced as a WARN."""
+    cap = settings.capability
+    n = len(cap.allowed_tools)
+    if n > 0:
+        scope = f" for server '{cap.server_name}'" if cap.server_name else ""
+        return CheckResult(
+            name="Capability filter",
+            status="pass",
+            detail=f"active — {n} tool(s) allowlisted{scope}",
+        )
+    return CheckResult(
+        name="Capability filter",
+        status="warn",
+        detail="inactive — no allowlist configured; all tool calls pass through",
+        suggestion=(
+            "Add a `capability.allowed_tools` list (and `capability.server_name`) "
+            "to your config to enable name-based filtering. See "
+            "https://github.com/churik5/bulwark-mcp#capability-filter."
         ),
     )
 

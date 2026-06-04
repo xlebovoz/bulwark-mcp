@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import IO, Any, Literal, Protocol, cast
 
+from .capability import CapabilityFilter
 from .config import Settings
 from .detectors.base import InspectionResult
 from .detectors.llm import OllamaClassifier
@@ -43,7 +44,7 @@ from .detectors.rules import RulesEngine
 from .health import HealthState
 from .health import serve as serve_health
 from .inspector import Inspector
-from .models import EventRecord, MCPRequest, parse_frame, split_batch
+from .models import EventRecord, JsonRpcId, MCPRequest, parse_frame, split_batch
 from .policy import Policy, default_policy
 from .storage import EventBuffer, Storage
 from .telemetry import TelemetryClient
@@ -133,6 +134,25 @@ async def run_proxy(
             inspector, classifier = await _build_inspector(settings, storage)
             client_write_lock = asyncio.Lock()
 
+            # Name-based capability filter — checked on c2s frames BEFORE the
+            # inspector. Fail-open: with no allowlist we warn loudly and pass
+            # everything through (never block silently when unconfigured).
+            capability_filter = CapabilityFilter(settings.capability)
+            if capability_filter.active:
+                logger.info(
+                    "capability: %d tool(s) allowlisted%s",
+                    len(settings.capability.allowed_tools),
+                    f" for server '{settings.capability.server_name}'"
+                    if settings.capability.server_name
+                    else "",
+                )
+            else:
+                logger.warning(
+                    "capability filter inactive — no allowlist configured. All tool "
+                    "calls will pass through without name filtering. See "
+                    "https://github.com/churik5/bulwark-mcp#capability-filter to enable."
+                )
+
             # ADR-0005 §3: opt-in telemetry side-car.
             telemetry_client: TelemetryClient | None = None
             telemetry_task: asyncio.Task[None] | None = None
@@ -165,6 +185,7 @@ async def run_proxy(
                         reverse_dst=client_writer,
                         direction="client_to_server",
                         inspector=inspector,
+                        capability=capability_filter,
                         client_write_lock=client_write_lock,
                         is_client_target=False,
                         buffer=buffer,
@@ -180,6 +201,7 @@ async def run_proxy(
                         reverse_dst=server_writer,
                         direction="server_to_client",
                         inspector=inspector,
+                        capability=None,  # capability filtering is c2s-only
                         client_write_lock=client_write_lock,
                         is_client_target=True,
                         buffer=buffer,
@@ -269,6 +291,7 @@ async def _pump(
     reverse_dst: _LineWriter,
     direction: Direction,
     inspector: Inspector | None,
+    capability: CapabilityFilter | None,
     client_write_lock: asyncio.Lock,
     is_client_target: bool,
     buffer: EventBuffer,
@@ -284,9 +307,13 @@ async def _pump(
         The "primary" peer for this direction — server stdin for c2s,
         client stdout for s2c.
     reverse_dst
-        The other peer. Only used when the inspector decides to BLOCK
-        a c2s request and we need to send a synthetic JSON-RPC error
-        back to the client (ADR-0004 §5).
+        The other peer. Used when the inspector decides to BLOCK a c2s
+        request (ADR-0004 §5) OR when the capability filter blocks a c2s
+        tool call — both send a synthetic JSON-RPC error back to the client.
+    capability
+        Name-based allowlist applied to c2s ``tools/call`` frames BEFORE
+        the inspector. ``None`` for the s2c pump (capability is c2s-only).
+        A capability block short-circuits the detector cascade entirely.
     is_client_target
         ``True`` when ``dst`` is the client writer. We hold
         ``client_write_lock`` for every write to a client-bound writer
@@ -336,6 +363,54 @@ async def _pump(
             # to keep JSON-RPC format valid).
             members = split_batch(decoded)
             is_batch = len(members) > 1
+
+            # Capability filter (c2s only) — a name-based allowlist checked
+            # BEFORE the detector cascade. A block here is fail-fast: it
+            # short-circuits the inspector entirely (no rules, no LLM, no
+            # policy) and the frame is never forwarded to the server.
+            if capability is not None and capability.active:
+                cap_hits = _scan_capability(members, capability)
+                blocked_hits = [
+                    (member, hit)
+                    for member, hit in zip(members, cap_hits, strict=True)
+                    if hit is not None and hit.blocked
+                ]
+                if blocked_hits:
+                    trace_id = _capability_trace_id()
+                    if is_batch:
+                        replacement_text = (
+                            "[" + ",".join(_build_capability_batch(members, cap_hits)) + "]"
+                        )
+                    else:
+                        first_hit = blocked_hits[0][1]
+                        replacement_text = _capability_error_reply(
+                            request_id=first_hit.parsed.id, full_name=first_hit.full_name
+                        )
+                    replacement_bytes = (replacement_text + "\n").encode("utf-8")
+                    if not await _safe_write(
+                        reverse_dst, replacement_bytes, lock=client_write_lock
+                    ):
+                        return
+                    for member, hit in zip(members, cap_hits, strict=True):
+                        if hit is not None and hit.blocked:
+                            _record_capability_block(
+                                buffer,
+                                session_id=session_id,
+                                member=member,
+                                hit=hit,
+                                trace_id=trace_id,
+                            )
+                        else:
+                            # Benign sibling in an aborted batch — log as a
+                            # plain row so the audit trail stays complete.
+                            _log_per_member(
+                                buffer,
+                                session_id=session_id,
+                                direction=direction,
+                                members=[member],
+                                inspections=[None],
+                            )
+                    continue
 
             inspections: list[InspectionResult | None] = []
             if inspector is not None:
@@ -481,6 +556,126 @@ def _compose_batch_aborted_reply(member: str) -> str | None:
         },
     }
     return json.dumps(body, separators=(",", ":"))
+
+
+# --------------------------------------------------------------------------
+# Capability filter (c2s tool-name allowlist) — see capability.py
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _CapHit:
+    """One c2s ``tools/call`` member resolved against the capability filter."""
+
+    parsed: MCPRequest
+    full_name: str
+    args_truncated: str
+    blocked: bool
+
+
+def _scan_capability(members: list[str], capability: CapabilityFilter) -> list[_CapHit | None]:
+    """Per-member capability decisions for a c2s frame.
+
+    Only ``tools/call`` requests carry a tool name; every other shape
+    (notifications, ``tools/list``, ``initialize``, parse errors) yields
+    ``None`` and is left for the inspector / normal forwarding. A
+    ``tools/call`` whose ``params.name`` is missing or non-string also
+    yields ``None`` — we cannot name it, so we do not block it.
+    """
+    hits: list[_CapHit | None] = []
+    for member in members:
+        parsed, _ = parse_frame(member)
+        hit: _CapHit | None = None
+        if isinstance(parsed, MCPRequest) and parsed.method == "tools/call":
+            params = parsed.params
+            tool = params.get("name") if isinstance(params, dict) else None
+            if isinstance(tool, str) and tool:
+                full_name = capability.namespaced(tool)
+                decision = capability.check(full_name)
+                args = params.get("arguments") if isinstance(params, dict) else None
+                args_json = json.dumps(args, separators=(",", ":"), ensure_ascii=False, default=str)
+                hit = _CapHit(
+                    parsed=parsed,
+                    full_name=full_name,
+                    args_truncated=args_json[:500],
+                    blocked=not decision.allowed,
+                )
+        hits.append(hit)
+    return hits
+
+
+def _build_capability_batch(members: list[str], cap_hits: list[_CapHit | None]) -> list[str]:
+    """Per-id reply array for a c2s batch where any member is capability-blocked.
+
+    The whole batch is aborted (never forwarded). Blocked members get the
+    -32603 capability error; benign sibling requests get the shared
+    ``batch_aborted_by_sibling`` reply so no request id is left unanswered;
+    notifications are dropped (no id, no reply expected).
+    """
+    out: list[str] = []
+    for member, hit in zip(members, cap_hits, strict=True):
+        if hit is not None and hit.blocked:
+            out.append(_capability_error_reply(request_id=hit.parsed.id, full_name=hit.full_name))
+            continue
+        synth = _compose_batch_aborted_reply(member)
+        if synth is not None:
+            out.append(synth)
+    return out
+
+
+def _capability_error_reply(*, request_id: JsonRpcId, full_name: str) -> str:
+    """JSON-RPC -32603 error telling the client the tool is not allowlisted
+    and exactly how to allow it. The original call is never forwarded."""
+    message = (
+        f"Tool '{full_name}' blocked by bulwark capability filter. "
+        "This tool is not in your allowlist. To allow it, add to config:\n"
+        "  capability:\n"
+        "    allowed_tools:\n"
+        f"    - {full_name}\n"
+        "See https://github.com/churik5/bulwark-mcp#capability-filter for details."
+    )
+    body: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": -32603, "message": message},
+    }
+    return json.dumps(body, separators=(",", ":"))
+
+
+def _capability_trace_id() -> str:
+    """8-hex-digit correlation id for a capability-block audit row."""
+    return os.urandom(4).hex()
+
+
+def _record_capability_block(
+    buffer: EventBuffer,
+    *,
+    session_id: int,
+    member: str,
+    hit: _CapHit,
+    trace_id: str,
+) -> None:
+    """Audit row for a capability-blocked c2s tool call.
+
+    Carries the blocking marker ``blocked_by_capability`` plus the
+    namespaced tool name and trace id in ``note``, the first 500 chars of
+    the JSON-serialised arguments in ``params_json``, and the original
+    frame in ``raw`` for forensics — mirroring how detector blocks are
+    logged. ``ts`` is the row's timestamp.
+    """
+    record = EventRecord(
+        session_id=session_id,
+        direction="client_to_server",
+        kind="request",
+        msg_id=None if hit.parsed.id is None else str(hit.parsed.id),
+        method="tools/call",
+        params_json=hit.args_truncated,
+        raw=member,
+        note=f"blocked_by_capability tool={hit.full_name} trace={trace_id}",
+        det_verdict="BLOCK",
+        det_action="block",
+    )
+    buffer.record(record)
 
 
 async def _safe_write(

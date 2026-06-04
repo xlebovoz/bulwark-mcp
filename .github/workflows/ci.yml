@@ -42,7 +42,7 @@ jobs:
           ruff format --check .
 
       - name: Mypy (strict)
-        run: mypy src/ tests/
+        run: mypy src/ tests/ tools/
 
       - name: Pytest
         run: pytest -q

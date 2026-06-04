@@ -19,6 +19,7 @@ and vice versa.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
@@ -195,6 +196,14 @@ class RulesEngine:
         """
         if not text:
             return RulesResult()
+        if direction == "client_to_server":
+            # Argv-style array arguments serialise without spaces between
+            # tokens (["rm","-rf","/"] → "rm","-rf","/"), evading the
+            # whitespace-dependent shell patterns. Surface them to the regex
+            # as a space-joined string; the original frame is unchanged.
+            extra = _extract_arguments_text(text)
+            if extra:
+                text = f"{text} {extra}"
         within = _normalise_within_word(text)
         between = _normalise_between_word(text)
         # Distinct passes only — most benign text yields three identical
@@ -246,6 +255,56 @@ def _normalise_between_word(text: str) -> str:
     folded = _fold_homoglyphs(unicodedata.normalize("NFKC", text))
     spaced = _INVISIBLE_CHARS_RE.sub(" ", folded)
     return _WHITESPACE_RUN_RE.sub(" ", spaced)
+
+
+def _extract_arguments_text(frame_text: str) -> str:
+    """Closes c2s shell-rule evasion via argv-style array arguments
+    (pre-fix: list-form ``rm -rf /`` passed with score 0.0).
+
+    For a client_to_server ``tools/call`` request, walk ``params.arguments``
+    and return every nested array's string elements joined with single
+    spaces. The caller appends this to the text fed to the regex pass so
+    ``["rm","-rf","/"]`` is scanned as ``rm -rf /``; the original frame is
+    never modified. Returns ``""`` for non-``tools/call`` frames,
+    unparseable frames, or arguments with no string arrays.
+
+    Scope is deliberately narrow — ONLY ``params.arguments`` of a
+    ``tools/call`` request. Arrays elsewhere in the frame are left alone.
+    """
+    try:
+        payload = json.loads(frame_text)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    if not isinstance(payload, dict) or payload.get("method") != "tools/call":
+        return ""
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return ""
+    arguments = params.get("arguments")
+    if arguments is None:
+        return ""
+    chunks: list[str] = []
+    _collect_array_strings(arguments, chunks)
+    return " ".join(chunks)
+
+
+def _collect_array_strings(node: Any, chunks: list[str]) -> None:
+    """Recursively gather the string elements of any array nested in
+    ``node``, appending each array's space-join to ``chunks``.
+
+    Dicts are recursed into (never coerced to strings); non-string scalars
+    inside arrays are ignored; arrays of dicts are recursed element-wise.
+    """
+    if isinstance(node, dict):
+        for value in node.values():
+            _collect_array_strings(value, chunks)
+    elif isinstance(node, list):
+        strings = [element for element in node if isinstance(element, str)]
+        if strings:
+            chunks.append(" ".join(strings))
+        for element in node:
+            if isinstance(element, dict | list):
+                _collect_array_strings(element, chunks)
 
 
 def _load_pack(path: Path) -> list[CompiledRule]:
